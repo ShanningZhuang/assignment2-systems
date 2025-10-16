@@ -1,0 +1,681 @@
+# with 5 warmup steps
+
+============================================================
+SUMMARY
+============================================================
+Model      Params       Forward (s)     Backward (s)   
+------------------------------------------------------------
+small      128,625,408 0.047414±0.001878 0.089398±0.001352
+medium     423,183,360 0.137800±0.000488 0.278282±0.001372
+large      969,411,840 0.285396±0.001535 0.610725±0.000791
+xl         1,998,235,200 0.576875±0.001101 1.207316±0.002639
+2.7B       3,406,809,600 0.874655±0.000958 1.820182±0.003748
+============================================================
+
+# with 0 warmup steps
+
+zsn@55555:~/course/CS336/assignments/assignment2-systems/benchmarks$ uv run benchmark_model_sizes.py 0
+============================================================
+BENCHMARKING MODEL SIZES FROM TABLE 1
+============================================================
+Vocabulary size: 10000
+Batch size: 4
+Warmup steps: 0
+Measurement steps: 10
+
+============================================================
+SMALL MODEL
+============================================================
+Parameters: 128,625,408
+Context length: 1024, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+  Measurement steps:
+    Step 1: 0.727932 seconds
+    Step 2: 0.046347 seconds
+    Step 3: 0.045883 seconds
+    Step 4: 0.045349 seconds
+    Step 5: 0.046045 seconds
+    Step 6: 0.045583 seconds
+    Step 7: 0.045899 seconds
+    Step 8: 0.045245 seconds
+    Step 9: 0.045891 seconds
+    Step 10: 0.053170 seconds
+  Mean: 0.114734 ± 0.204411 seconds (CV: 178.16%)
+
+Forward + Backward pass:
+  Warmup steps:
+  Measurement steps:
+    Step 1: 0.301287 seconds
+    Step 2: 0.140259 seconds
+    Step 3: 0.136516 seconds
+    Step 4: 0.142591 seconds
+    Step 5: 0.135958 seconds
+    Step 6: 0.134765 seconds
+    Step 7: 0.139739 seconds
+    Step 8: 0.136776 seconds
+    Step 9: 0.141417 seconds
+    Step 10: 0.141375 seconds
+  Mean: 0.155068 ± 0.048806 seconds (CV: 31.47%)
+  Backward-only: 0.040334 seconds (0.35x forward)
+
+============================================================
+MEDIUM MODEL
+============================================================
+Parameters: 423,183,360
+Context length: 1024, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+  Measurement steps:
+    Step 1: 0.189025 seconds
+    Step 2: 0.138021 seconds
+    Step 3: 0.136546 seconds
+    Step 4: 0.135914 seconds
+    Step 5: 0.137789 seconds
+    Step 6: 0.136638 seconds
+    Step 7: 0.137169 seconds
+    Step 8: 0.138853 seconds
+    Step 9: 0.137219 seconds
+    Step 10: 0.136845 seconds
+  Mean: 0.142402 ± 0.015561 seconds (CV: 10.93%)
+
+Forward + Backward pass:
+  Warmup steps:
+  Measurement steps:
+    Step 1: 0.421279 seconds
+    Step 2: 0.414361 seconds
+    Step 3: 0.415457 seconds
+    Step 4: 0.415562 seconds
+    Step 5: 0.416497 seconds
+    Step 6: 0.415287 seconds
+    Step 7: 0.414641 seconds
+    Step 8: 0.414703 seconds
+    Step 9: 0.415819 seconds
+    Step 10: 0.420405 seconds
+  Mean: 0.416401 ± 0.002305 seconds (CV: 0.55%)
+  Backward-only: 0.273999 seconds (1.92x forward)
+
+============================================================
+LARGE MODEL
+============================================================
+Parameters: 969,411,840
+Context length: 2048, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+  Measurement steps:
+    Step 1: 0.368290 seconds
+    Step 2: 0.286049 seconds
+    Step 3: 0.283720 seconds
+    Step 4: 0.287442 seconds
+    Step 5: 0.283649 seconds
+    Step 6: 0.283953 seconds
+    Step 7: 0.286321 seconds
+    Step 8: 0.286134 seconds
+    Step 9: 0.285064 seconds
+    Step 10: 0.284934 seconds
+  Mean: 0.293556 ± 0.024940 seconds (CV: 8.50%)
+
+Forward + Backward pass:
+  Warmup steps:
+  Measurement steps:
+    Step 1: 0.891368 seconds
+    Step 2: 0.889391 seconds
+    Step 3: 0.889847 seconds
+    Step 4: 0.891205 seconds
+    Step 5: 0.891530 seconds
+    Step 6: 0.891184 seconds
+    Step 7: 0.892898 seconds
+    Step 8: 0.893858 seconds
+    Step 9: 0.893329 seconds
+    Step 10: 0.893166 seconds
+  Mean: 0.891778 ± 0.001423 seconds (CV: 0.16%)
+  Backward-only: 0.598222 seconds (2.04x forward)
+
+============================================================
+XL MODEL
+============================================================
+Parameters: 1,998,235,200
+Context length: 2048, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+  Measurement steps:
+    Step 1: 0.641036 seconds
+    Step 2: 0.573764 seconds
+    Step 3: 0.572457 seconds
+    Step 4: 0.575416 seconds
+    Step 5: 0.571630 seconds
+    Step 6: 0.574750 seconds
+    Step 7: 0.573834 seconds
+    Step 8: 0.573017 seconds
+    Step 9: 0.574182 seconds
+    Step 10: 0.574027 seconds
+  Mean: 0.580411 ± 0.020235 seconds (CV: 3.49%)
+
+Forward + Backward pass:
+  Warmup steps:
+  Measurement steps:
+    Step 1: 1.764817 seconds
+    Step 2: 1.767748 seconds
+    Step 3: 1.767063 seconds
+    Step 4: 1.769659 seconds
+    Step 5: 1.775135 seconds
+    Step 6: 1.776389 seconds
+    Step 7: 1.776078 seconds
+    Step 8: 1.778151 seconds
+    Step 9: 1.779347 seconds
+    Step 10: 1.779442 seconds
+  Mean: 1.773383 ± 0.005228 seconds (CV: 0.29%)
+  Backward-only: 1.192972 seconds (2.06x forward)
+
+============================================================
+2.7B MODEL
+============================================================
+Parameters: 3,406,809,600
+Context length: 2048, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+  Measurement steps:
+    Step 1: 0.960447 seconds
+    Step 2: 0.869197 seconds
+    Step 3: 0.871666 seconds
+    Step 4: 0.868420 seconds
+    Step 5: 0.869943 seconds
+    Step 6: 0.870164 seconds
+    Step 7: 0.870944 seconds
+    Step 8: 0.870937 seconds
+    Step 9: 0.871128 seconds
+    Step 10: 0.871363 seconds
+  Mean: 0.879421 ± 0.027026 seconds (CV: 3.07%)
+
+Forward + Backward pass:
+  Warmup steps:
+  Measurement steps:
+    Step 1: 2.664166 seconds
+    Step 2: 2.673857 seconds
+    Step 3: 2.676276 seconds
+    Step 4: 2.677587 seconds
+    Step 5: 2.678948 seconds
+    Step 6: 2.683358 seconds
+    Step 7: 2.685191 seconds
+    Step 8: 2.685707 seconds
+    Step 9: 2.688543 seconds
+    Step 10: 2.690011 seconds
+  Mean: 2.680364 ± 0.007429 seconds (CV: 0.28%)
+  Backward-only: 1.800944 seconds (2.05x forward)
+
+============================================================
+SUMMARY
+============================================================
+Model      Params       Forward (s)     Backward (s)   
+------------------------------------------------------------
+small      128,625,408 0.114734±0.204411 0.040334±0.048806
+medium     423,183,360 0.142402±0.015561 0.273999±0.002305
+large      969,411,840 0.293556±0.024940 0.598222±0.001423
+xl         1,998,235,200 0.580411±0.020235 1.192972±0.005228
+2.7B       3,406,809,600 0.879421±0.027026 1.800944±0.007429
+============================================================
+
+# with 1 warmup steps
+
+zsn@55555:~/course/CS336/assignments/assignment2-systems/benchmarks$ uv run benchmark_model_sizes.py 1
+============================================================
+BENCHMARKING MODEL SIZES FROM TABLE 1
+============================================================
+Vocabulary size: 10000
+Batch size: 4
+Warmup steps: 1
+Measurement steps: 10
+
+============================================================
+SMALL MODEL
+============================================================
+Parameters: 128,625,408
+Context length: 1024, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+    Step 1: 0.628055 seconds
+  Measurement steps:
+    Step 1: 0.046203 seconds
+    Step 2: 0.046151 seconds
+    Step 3: 0.045665 seconds
+    Step 4: 0.045749 seconds
+    Step 5: 0.046765 seconds
+    Step 6: 0.046495 seconds
+    Step 7: 0.045434 seconds
+    Step 8: 0.046902 seconds
+    Step 9: 0.046462 seconds
+    Step 10: 0.045694 seconds
+  Mean: 0.046152 ± 0.000477 seconds (CV: 1.03%)
+
+Forward + Backward pass:
+  Warmup steps:
+    Step 1: 0.307425 seconds
+  Measurement steps:
+    Step 1: 0.139035 seconds
+    Step 2: 0.141651 seconds
+    Step 3: 0.139078 seconds
+    Step 4: 0.149297 seconds
+    Step 5: 0.140209 seconds
+    Step 6: 0.137982 seconds
+    Step 7: 0.147112 seconds
+    Step 8: 0.137414 seconds
+    Step 9: 0.139499 seconds
+    Step 10: 0.136796 seconds
+  Mean: 0.140807 ± 0.003954 seconds (CV: 2.81%)
+  Backward-only: 0.094655 seconds (2.05x forward)
+
+============================================================
+MEDIUM MODEL
+============================================================
+Parameters: 423,183,360
+Context length: 1024, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+    Step 1: 0.205041 seconds
+  Measurement steps:
+    Step 1: 0.138102 seconds
+    Step 2: 0.136875 seconds
+    Step 3: 0.137080 seconds
+    Step 4: 0.138641 seconds
+    Step 5: 0.138665 seconds
+    Step 6: 0.138001 seconds
+    Step 7: 0.137596 seconds
+    Step 8: 0.138405 seconds
+    Step 9: 0.137741 seconds
+    Step 10: 0.138102 seconds
+  Mean: 0.137921 ± 0.000576 seconds (CV: 0.42%)
+
+Forward + Backward pass:
+  Warmup steps:
+    Step 1: 0.415801 seconds
+  Measurement steps:
+    Step 1: 0.416646 seconds
+    Step 2: 0.417022 seconds
+    Step 3: 0.419048 seconds
+    Step 4: 0.416321 seconds
+    Step 5: 0.418127 seconds
+    Step 6: 0.415555 seconds
+    Step 7: 0.430432 seconds
+    Step 8: 0.415850 seconds
+    Step 9: 0.415958 seconds
+    Step 10: 0.416419 seconds
+  Mean: 0.418138 ± 0.004223 seconds (CV: 1.01%)
+  Backward-only: 0.280217 seconds (2.03x forward)
+
+============================================================
+LARGE MODEL
+============================================================
+Parameters: 969,411,840
+Context length: 2048, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+    Step 1: 0.380588 seconds
+  Measurement steps:
+    Step 1: 0.284954 seconds
+    Step 2: 0.287509 seconds
+    Step 3: 0.290540 seconds
+    Step 4: 0.287729 seconds
+    Step 5: 0.286363 seconds
+    Step 6: 0.286249 seconds
+    Step 7: 0.287041 seconds
+    Step 8: 0.287475 seconds
+    Step 9: 0.286665 seconds
+    Step 10: 0.286848 seconds
+  Mean: 0.287137 ± 0.001366 seconds (CV: 0.48%)
+
+Forward + Backward pass:
+  Warmup steps:
+    Step 1: 0.892542 seconds
+  Measurement steps:
+    Step 1: 0.894559 seconds
+    Step 2: 0.895391 seconds
+    Step 3: 0.895692 seconds
+    Step 4: 0.895985 seconds
+    Step 5: 0.894991 seconds
+    Step 6: 0.896965 seconds
+    Step 7: 0.894960 seconds
+    Step 8: 0.903089 seconds
+    Step 9: 0.906444 seconds
+    Step 10: 0.897851 seconds
+  Mean: 0.897593 ± 0.003781 seconds (CV: 0.42%)
+  Backward-only: 0.610455 seconds (2.13x forward)
+
+============================================================
+XL MODEL
+============================================================
+Parameters: 1,998,235,200
+Context length: 2048, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+    Step 1: 0.627828 seconds
+  Measurement steps:
+    Step 1: 0.577575 seconds
+    Step 2: 0.582047 seconds
+    Step 3: 0.577050 seconds
+    Step 4: 0.576581 seconds
+    Step 5: 0.577276 seconds
+    Step 6: 0.576727 seconds
+    Step 7: 0.580693 seconds
+    Step 8: 0.577389 seconds
+    Step 9: 0.581167 seconds
+    Step 10: 0.576332 seconds
+  Mean: 0.578284 ± 0.002031 seconds (CV: 0.35%)
+
+Forward + Backward pass:
+  Warmup steps:
+    Step 1: 1.772854 seconds
+  Measurement steps:
+    Step 1: 1.774263 seconds
+    Step 2: 1.774565 seconds
+    Step 3: 1.777829 seconds
+    Step 4: 1.779549 seconds
+    Step 5: 1.781107 seconds
+    Step 6: 1.780166 seconds
+    Step 7: 1.782233 seconds
+    Step 8: 1.782071 seconds
+    Step 9: 1.783655 seconds
+    Step 10: 1.784054 seconds
+  Mean: 1.779949 ± 0.003281 seconds (CV: 0.18%)
+  Backward-only: 1.201665 seconds (2.08x forward)
+
+============================================================
+2.7B MODEL
+============================================================
+Parameters: 3,406,809,600
+Context length: 2048, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+    Step 1: 0.954855 seconds
+  Measurement steps:
+    Step 1: 0.870321 seconds
+    Step 2: 0.871171 seconds
+    Step 3: 0.869806 seconds
+    Step 4: 0.871500 seconds
+    Step 5: 0.871417 seconds
+    Step 6: 0.871539 seconds
+    Step 7: 0.871905 seconds
+    Step 8: 0.871781 seconds
+    Step 9: 0.872230 seconds
+    Step 10: 0.871665 seconds
+  Mean: 0.871334 ± 0.000700 seconds (CV: 0.08%)
+
+Forward + Backward pass:
+  Warmup steps:
+    Step 1: 2.668103 seconds
+  Measurement steps:
+    Step 1: 2.680053 seconds
+    Step 2: 2.680127 seconds
+    Step 3: 2.682077 seconds
+    Step 4: 2.686586 seconds
+    Step 5: 2.686707 seconds
+    Step 6: 2.689342 seconds
+    Step 7: 2.690024 seconds
+    Step 8: 2.693874 seconds
+    Step 9: 2.693563 seconds
+    Step 10: 2.695250 seconds
+  Mean: 2.687760 ± 0.005359 seconds (CV: 0.20%)
+  Backward-only: 1.816427 seconds (2.08x forward)
+
+============================================================
+SUMMARY
+============================================================
+Model      Params       Forward (s)     Backward (s)   
+------------------------------------------------------------
+small      128,625,408 0.046152±0.000477 0.094655±0.003954
+medium     423,183,360 0.137921±0.000576 0.280217±0.004223
+large      969,411,840 0.287137±0.001366 0.610455±0.003781
+xl         1,998,235,200 0.578284±0.002031 1.201665±0.003281
+2.7B       3,406,809,600 0.871334±0.000700 1.816427±0.005359
+============================================================
+
+# with 2 warmup steps
+
+zsn@55555:~/course/CS336/assignments/assignment2-systems/benchmarks$ uv run benchmark_model_sizes.py 2
+============================================================
+BENCHMARKING MODEL SIZES FROM TABLE 1
+============================================================
+Vocabulary size: 10000
+Batch size: 4
+Warmup steps: 2
+Measurement steps: 10
+
+============================================================
+SMALL MODEL
+============================================================
+Parameters: 128,625,408
+Context length: 1024, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+    Step 1: 0.631429 seconds
+    Step 2: 0.044812 seconds
+  Measurement steps:
+    Step 1: 0.051471 seconds
+    Step 2: 0.045034 seconds
+    Step 3: 0.046783 seconds
+    Step 4: 0.045330 seconds
+    Step 5: 0.046920 seconds
+    Step 6: 0.046807 seconds
+    Step 7: 0.045486 seconds
+    Step 8: 0.047648 seconds
+    Step 9: 0.046526 seconds
+    Step 10: 0.045998 seconds
+  Mean: 0.046800 ± 0.001740 seconds (CV: 3.72%)
+
+Forward + Backward pass:
+  Warmup steps:
+    Step 1: 0.306186 seconds
+    Step 2: 0.135121 seconds
+  Measurement steps:
+    Step 1: 0.138173 seconds
+    Step 2: 0.144167 seconds
+    Step 3: 0.136560 seconds
+    Step 4: 0.138441 seconds
+    Step 5: 0.143266 seconds
+    Step 6: 0.142652 seconds
+    Step 7: 0.136827 seconds
+    Step 8: 0.143124 seconds
+    Step 9: 0.142272 seconds
+    Step 10: 0.143819 seconds
+  Mean: 0.140930 ± 0.002891 seconds (CV: 2.05%)
+  Backward-only: 0.094130 seconds (2.01x forward)
+
+============================================================
+MEDIUM MODEL
+============================================================
+Parameters: 423,183,360
+Context length: 1024, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+    Step 1: 0.190230 seconds
+    Step 2: 0.137612 seconds
+  Measurement steps:
+    Step 1: 0.139708 seconds
+    Step 2: 0.137968 seconds
+    Step 3: 0.137043 seconds
+    Step 4: 0.137409 seconds
+    Step 5: 0.138266 seconds
+    Step 6: 0.138561 seconds
+    Step 7: 0.138240 seconds
+    Step 8: 0.138830 seconds
+    Step 9: 0.137964 seconds
+    Step 10: 0.136769 seconds
+  Mean: 0.138076 ± 0.000823 seconds (CV: 0.60%)
+
+Forward + Backward pass:
+  Warmup steps:
+    Step 1: 0.420021 seconds
+    Step 2: 0.418968 seconds
+  Measurement steps:
+    Step 1: 0.417838 seconds
+    Step 2: 0.414810 seconds
+    Step 3: 0.418014 seconds
+    Step 4: 0.416382 seconds
+    Step 5: 0.417363 seconds
+    Step 6: 0.416421 seconds
+    Step 7: 0.420390 seconds
+    Step 8: 0.417462 seconds
+    Step 9: 0.416700 seconds
+    Step 10: 0.419946 seconds
+  Mean: 0.417532 ± 0.001582 seconds (CV: 0.38%)
+  Backward-only: 0.279457 seconds (2.02x forward)
+
+============================================================
+LARGE MODEL
+============================================================
+Parameters: 969,411,840
+Context length: 2048, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+    Step 1: 0.370532 seconds
+    Step 2: 0.285775 seconds
+  Measurement steps:
+    Step 1: 0.289051 seconds
+    Step 2: 0.287858 seconds
+    Step 3: 0.287257 seconds
+    Step 4: 0.286708 seconds
+    Step 5: 0.285957 seconds
+    Step 6: 0.286987 seconds
+    Step 7: 0.286811 seconds
+    Step 8: 0.286751 seconds
+    Step 9: 0.286773 seconds
+    Step 10: 0.285740 seconds
+  Mean: 0.286989 ± 0.000890 seconds (CV: 0.31%)
+
+Forward + Backward pass:
+  Warmup steps:
+    Step 1: 0.894216 seconds
+    Step 2: 0.893443 seconds
+  Measurement steps:
+    Step 1: 0.894949 seconds
+    Step 2: 0.894099 seconds
+    Step 3: 0.896896 seconds
+    Step 4: 0.896467 seconds
+    Step 5: 0.896863 seconds
+    Step 6: 0.896992 seconds
+    Step 7: 0.896774 seconds
+    Step 8: 0.899461 seconds
+    Step 9: 0.898541 seconds
+    Step 10: 0.899752 seconds
+  Mean: 0.897079 ± 0.001701 seconds (CV: 0.19%)
+  Backward-only: 0.610090 seconds (2.13x forward)
+
+============================================================
+XL MODEL
+============================================================
+Parameters: 1,998,235,200
+Context length: 2048, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+    Step 1: 0.646895 seconds
+    Step 2: 0.577209 seconds
+  Measurement steps:
+    Step 1: 0.577413 seconds
+    Step 2: 0.577305 seconds
+    Step 3: 0.577701 seconds
+    Step 4: 0.576888 seconds
+    Step 5: 0.577383 seconds
+    Step 6: 0.580341 seconds
+    Step 7: 0.576831 seconds
+    Step 8: 0.576922 seconds
+    Step 9: 0.578739 seconds
+    Step 10: 0.577296 seconds
+  Mean: 0.577682 ± 0.001028 seconds (CV: 0.18%)
+
+Forward + Backward pass:
+  Warmup steps:
+    Step 1: 1.775394 seconds
+    Step 2: 1.777307 seconds
+  Measurement steps:
+    Step 1: 1.778186 seconds
+    Step 2: 1.779706 seconds
+    Step 3: 1.780954 seconds
+    Step 4: 1.781598 seconds
+    Step 5: 1.782250 seconds
+    Step 6: 1.784930 seconds
+    Step 7: 1.786108 seconds
+    Step 8: 1.784547 seconds
+    Step 9: 1.784358 seconds
+    Step 10: 1.786512 seconds
+  Mean: 1.782915 ± 0.002658 seconds (CV: 0.15%)
+  Backward-only: 1.205233 seconds (2.09x forward)
+
+============================================================
+2.7B MODEL
+============================================================
+Parameters: 3,406,809,600
+Context length: 2048, Sequence length: 512
+
+Forward pass:
+  Warmup steps:
+    Step 1: 0.952326 seconds
+    Step 2: 0.871269 seconds
+  Measurement steps:
+    Step 1: 0.872231 seconds
+    Step 2: 0.872324 seconds
+    Step 3: 0.873040 seconds
+    Step 4: 0.872621 seconds
+    Step 5: 0.873240 seconds
+    Step 6: 0.873159 seconds
+    Step 7: 0.874449 seconds
+    Step 8: 0.874260 seconds
+    Step 9: 0.874021 seconds
+    Step 10: 0.875183 seconds
+  Mean: 0.873453 ± 0.000934 seconds (CV: 0.11%)
+
+Forward + Backward pass:
+  Warmup steps:
+    Step 1: 2.677101 seconds
+    Step 2: 2.678427 seconds
+  Measurement steps:
+    Step 1: 2.683043 seconds
+    Step 2: 2.683886 seconds
+    Step 3: 2.685430 seconds
+    Step 4: 2.687018 seconds
+    Step 5: 2.688715 seconds
+    Step 6: 2.691627 seconds
+    Step 7: 2.691883 seconds
+    Step 8: 2.694323 seconds
+    Step 9: 2.693858 seconds
+    Step 10: 2.696358 seconds
+  Mean: 2.689614 ± 0.004426 seconds (CV: 0.16%)
+  Backward-only: 1.816161 seconds (2.08x forward)
+
+============================================================
+SUMMARY
+============================================================
+Model      Params       Forward (s)     Backward (s)   
+------------------------------------------------------------
+small      128,625,408 0.046800±0.001740 0.094130±0.002891
+medium     423,183,360 0.138076±0.000823 0.279457±0.001582
+large      969,411,840 0.286989±0.000890 0.610090±0.001701
+xl         1,998,235,200 0.577682±0.001028 1.205233±0.002658
+2.7B       3,406,809,600 0.873453±0.000934 1.816161±0.004426
+============================================================
+
+# Result
+
+When PyTorch code runs for the first time, it incurs significant overhead due to several initialization and compilation steps:
+
+1. **CUDA Kernel Compilation**: PyTorch uses JIT (Just-In-Time) compilation for CUDA kernels. The first time a specific operation is executed, PyTorch must compile the corresponding CUDA kernel for the specific input shapes and data types. This compilation is cached for subsequent runs.
+
+2. **cuDNN Algorithm Selection**: For operations like convolutions and matrix multiplications, cuDNN (CUDA Deep Neural Network library) performs autotuning to select the most efficient algorithm for the given hardware and input dimensions. This selection process involves testing multiple algorithms and is cached after the first run.
+
+3. **Memory Allocation**: The first execution allocates GPU memory for tensors and intermediate results. PyTorch's caching allocator then reuses this memory in subsequent iterations, avoiding allocation overhead.
+
+4. **Graph Construction**: PyTorch builds the computational graph during the first forward pass, which includes operator fusion optimizations and memory planning.
+
+This is why warmup steps are essential in benchmarking - they allow these one-time initialization costs to complete before measurements begin, ensuring that timing results reflect the steady-state performance rather than cold-start overhead.

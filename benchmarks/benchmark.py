@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
 Benchmark the model sizes from Table 1 (§1.1.2).
-Measures forward and backward pass timing with 5 warmup steps and 10 measurement steps.
+Measures forward and backward pass timing with configurable warmup steps and 10 measurement steps.
 Uses vocabulary size of 10,000 and batch size of 4 for all models.
 """
 
 import torch
 import timeit
 import numpy as np
+import sys
+import torch.cuda.nvtx as nvtx
 from cs336_basics.model import BasicsTransformerLM
 
 # Model configurations from Table 1
@@ -52,11 +54,11 @@ MODELS = {
 # Fixed parameters (as per homework requirements)
 VOCAB_SIZE = 10000
 BATCH_SIZE = 4
-WARMUP_STEPS = 5
+WARMUP_STEPS = 5  # Can be overridden via command line
 MEASUREMENT_STEPS = 10
 
 
-def benchmark_model(name, config, seq_length=512):
+def benchmark_model(name, config, seq_length=512, warmup_steps=WARMUP_STEPS):
     """Benchmark a single model configuration."""
     print(f"\n{'='*60}\n{name.upper()} MODEL\n{'='*60}")
 
@@ -79,42 +81,64 @@ def benchmark_model(name, config, seq_length=512):
 
     # Benchmark forward pass
     print("\nForward pass:")
-    for _ in range(WARMUP_STEPS):
-        with torch.no_grad():
-            model(input_ids)
-        torch.cuda.synchronize()
+    print("  Warmup steps:")
+    with nvtx.range(f"{name}_forward_warmup"):
+        for i in range(warmup_steps):
+            start = timer()
+            with nvtx.range(f"warmup_step_{i+1}"):
+                with torch.no_grad():
+                    model(input_ids)
+                torch.cuda.synchronize()
+            warmup_time = timer() - start
+            print(f"    Step {i+1}: {warmup_time:.6f} seconds")
 
+    print("  Measurement steps:")
     times = []
-    for _ in range(MEASUREMENT_STEPS):
-        start = timer()
-        with torch.no_grad():
-            model(input_ids)
-        torch.cuda.synchronize()
-        times.append(timer() - start)
+    with nvtx.range(f"{name}_forward_measurement"):
+        for i in range(MEASUREMENT_STEPS):
+            start = timer()
+            with nvtx.range(f"measurement_step_{i+1}"):
+                with torch.no_grad():
+                    model(input_ids)
+                torch.cuda.synchronize()
+            step_time = timer() - start
+            times.append(step_time)
+            print(f"    Step {i+1}: {step_time:.6f} seconds")
 
     fwd_mean, fwd_std = np.mean(times), np.std(times)
-    print(f"  {fwd_mean:.6f} ± {fwd_std:.6f} seconds (CV: {fwd_std/fwd_mean*100:.2f}%)")
+    print(f"  Mean: {fwd_mean:.6f} ± {fwd_std:.6f} seconds (CV: {fwd_std/fwd_mean*100:.2f}%)")
 
     # Benchmark forward + backward pass
-    print("Forward + Backward pass:")
+    print("\nForward + Backward pass:")
     model.train()
-    for _ in range(WARMUP_STEPS):
-        model(input_ids).sum().backward()
-        model.zero_grad()
-        torch.cuda.synchronize()
+    print("  Warmup steps:")
+    with nvtx.range(f"{name}_forward_backward_warmup"):
+        for i in range(warmup_steps):
+            start = timer()
+            with nvtx.range(f"warmup_step_{i+1}"):
+                model(input_ids).sum().backward()
+                model.zero_grad()
+                torch.cuda.synchronize()
+            warmup_time = timer() - start
+            print(f"    Step {i+1}: {warmup_time:.6f} seconds")
 
+    print("  Measurement steps:")
     times = []
-    for _ in range(MEASUREMENT_STEPS):
-        start = timer()
-        model(input_ids).sum().backward()
-        model.zero_grad()
-        torch.cuda.synchronize()
-        times.append(timer() - start)
+    with nvtx.range(f"{name}_forward_backward_measurement"):
+        for i in range(MEASUREMENT_STEPS):
+            start = timer()
+            with nvtx.range(f"measurement_step_{i+1}"):
+                model(input_ids).sum().backward()
+                model.zero_grad()
+                torch.cuda.synchronize()
+            step_time = timer() - start
+            times.append(step_time)
+            print(f"    Step {i+1}: {step_time:.6f} seconds")
 
     bwd_mean, bwd_std = np.mean(times), np.std(times)
     bwd_only = bwd_mean - fwd_mean
 
-    print(f"  {bwd_mean:.6f} ± {bwd_std:.6f} seconds (CV: {bwd_std/bwd_mean*100:.2f}%)")
+    print(f"  Mean: {bwd_mean:.6f} ± {bwd_std:.6f} seconds (CV: {bwd_std/bwd_mean*100:.2f}%)")
     print(f"  Backward-only: {bwd_only:.6f} seconds ({bwd_only/fwd_mean:.2f}x forward)")
 
     return {
@@ -128,19 +152,24 @@ def benchmark_model(name, config, seq_length=512):
 
 
 def main():
+    # Parse command line argument for warmup steps
+    warmup_steps = WARMUP_STEPS
+    if len(sys.argv) > 1:
+        warmup_steps = int(sys.argv[1])
+    
     print("=" * 60)
     print("BENCHMARKING MODEL SIZES FROM TABLE 1")
     print("=" * 60)
     print(f"Vocabulary size: {VOCAB_SIZE}")
     print(f"Batch size: {BATCH_SIZE}")
-    print(f"Warmup steps: {WARMUP_STEPS}")
+    print(f"Warmup steps: {warmup_steps}")
     print(f"Measurement steps: {MEASUREMENT_STEPS}")
 
     results = []
     for name, config in MODELS.items():
         # Use smaller sequence length for 2.7B model to fit in memory
-        seq = 256 if name == "2.7B" else 512
-        result = benchmark_model(name, config, seq_length=seq)
+        seq = 512
+        result = benchmark_model(name, config, seq_length=seq, warmup_steps=warmup_steps)
         results.append(result)
 
     # Summary
