@@ -6,16 +6,32 @@ Uses configurable warmup steps and 10 measurement steps.
 Uses vocabulary size of 10,000 and batch size of 4 for all models.
 
 Usage:
-    python benchmark.py                          # Run all models with default warmup steps
-    python benchmark.py 10                       # Run all models with 10 warmup steps
+    python benchmark.py                          # Run all benchmarks (forward, backward, training)
+    python benchmark.py 10                       # Run all with 10 warmup steps
     python benchmark.py small medium             # Run only small and medium models
     python benchmark.py 10 small medium          # Run small and medium with 10 warmup steps
+
+    # Mixed precision (BF16):
     python benchmark.py --bf16                   # Run all models with BF16 mixed precision
     python benchmark.py --bf16 small medium      # Run specific models with BF16
     python benchmark.py 10 --bf16 small          # Run with 10 warmup steps and BF16
 
+    # Selective benchmarks:
+    python benchmark.py --forward-only small     # Run only forward pass
+    python benchmark.py --backward-only small    # Run only forward+backward pass
+    python benchmark.py --training-only small    # Run only training step with optimizer
+    python benchmark.py --forward-only --backward-only small  # Run forward and backward (skip training)
+
+    # Memory profiling:
+    python benchmark.py --profile-memory small   # Run with CUDA memory profiling
+    python benchmark.py --profile-memory --bf16 --forward-only small  # Profile BF16 forward pass
+
 For profiling with Nsight Systems:
     nsys profile -o profile_training --trace=cuda,nvtx python benchmark.py small
+
+For memory profiling:
+    python benchmark.py --profile-memory small
+    # Upload the generated memory_snapshot_*.pickle file to https://pytorch.org/memory_viz
 """
 
 import torch
@@ -78,10 +94,186 @@ WARMUP_STEPS = 5  # Can be overridden via command line
 MEASUREMENT_STEPS = 10
 
 
+def benchmark_forward_only(
+    name, config, seq_length=512, warmup_steps=WARMUP_STEPS, use_bf16=False
+):
+    """Benchmark forward pass only.
+
+    Args:
+        name: Model name for display
+        config: Model configuration dict
+        seq_length: Sequence length to benchmark
+        warmup_steps: Number of warmup iterations
+        use_bf16: If True, use BF16 mixed precision via torch.autocast
+    """
+    precision_str = "BF16" if use_bf16 else "FP32"
+    print(
+        f"\n{'='*60}\n{name.upper()} MODEL - FORWARD ONLY ({precision_str})\n{'='*60}"
+    )
+
+    # Initialize model
+    model = BasicsTransformerLM(
+        vocab_size=VOCAB_SIZE,
+        context_length=config["context_length"],
+        d_model=config["d_model"],
+        num_layers=config["num_layers"],
+        num_heads=config["num_heads"],
+        d_ff=config["d_ff"],
+        rope_theta=10000.0,
+    ).cuda()
+
+    input_ids = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, seq_length)).cuda()
+    timer = timeit.default_timer
+
+    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"Context length: {config['context_length']}, Sequence length: {seq_length}")
+    print(f"Precision: {precision_str}")
+
+    # Create autocast context for mixed precision or nullcontext for full precision
+    autocast_context = (
+        torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        if use_bf16
+        else nullcontext()
+    )
+
+    # Benchmark forward pass
+    print("\nForward pass:")
+    print("  Warmup steps:")
+    with nvtx.range(f"{name}_forward_warmup"):
+        for i in range(warmup_steps):
+            start = timer()
+            with nvtx.range(f"warmup_step_{i+1}"):
+                with torch.no_grad():
+                    with autocast_context:
+                        model(input_ids)
+                torch.cuda.synchronize()
+            warmup_time = timer() - start
+            print(f"    Step {i+1}: {warmup_time:.6f} seconds")
+
+    print("  Measurement steps:")
+    times = []
+    with nvtx.range(f"{name}_forward_measurement"):
+        for i in range(MEASUREMENT_STEPS):
+            start = timer()
+            with nvtx.range(f"measurement_step_{i+1}"):
+                with torch.no_grad():
+                    with autocast_context:
+                        model(input_ids)
+                torch.cuda.synchronize()
+            step_time = timer() - start
+            times.append(step_time)
+            print(f"    Step {i+1}: {step_time:.6f} seconds")
+
+    fwd_mean, fwd_std = np.mean(times), np.std(times)
+    print(
+        f"  Mean: {fwd_mean:.6f} ± {fwd_std:.6f} seconds (CV: {fwd_std/fwd_mean*100:.2f}%)"
+    )
+
+    return {
+        "name": name,
+        "params": sum(p.numel() for p in model.parameters()),
+        "precision": precision_str,
+        "forward_mean": fwd_mean,
+        "forward_std": fwd_std,
+    }
+
+
+def benchmark_backward_only(
+    name, config, seq_length=512, warmup_steps=WARMUP_STEPS, use_bf16=False
+):
+    """Benchmark forward + backward pass.
+
+    Args:
+        name: Model name for display
+        config: Model configuration dict
+        seq_length: Sequence length to benchmark
+        warmup_steps: Number of warmup iterations
+        use_bf16: If True, use BF16 mixed precision via torch.autocast
+    """
+    precision_str = "BF16" if use_bf16 else "FP32"
+    print(
+        f"\n{'='*60}\n{name.upper()} MODEL - FORWARD + BACKWARD ({precision_str})\n{'='*60}"
+    )
+
+    # Initialize model
+    model = BasicsTransformerLM(
+        vocab_size=VOCAB_SIZE,
+        context_length=config["context_length"],
+        d_model=config["d_model"],
+        num_layers=config["num_layers"],
+        num_heads=config["num_heads"],
+        d_ff=config["d_ff"],
+        rope_theta=10000.0,
+    ).cuda()
+
+    input_ids = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, seq_length)).cuda()
+    timer = timeit.default_timer
+
+    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"Context length: {config['context_length']}, Sequence length: {seq_length}")
+    print(f"Precision: {precision_str}")
+
+    # Create autocast context for mixed precision or nullcontext for full precision
+    autocast_context = (
+        torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        if use_bf16
+        else nullcontext()
+    )
+
+    # Benchmark forward + backward pass
+    print("\nForward + Backward pass:")
+    model.train()
+    print("  Warmup steps:")
+    with nvtx.range(f"{name}_forward_backward_warmup"):
+        for i in range(warmup_steps):
+            start = timer()
+            with nvtx.range(f"warmup_step_{i+1}"):
+                with nvtx.range("forward"):
+                    with autocast_context:
+                        output = model(input_ids)
+                with nvtx.range("backward"):
+                    output.sum().backward()
+                model.zero_grad()
+                torch.cuda.synchronize()
+            warmup_time = timer() - start
+            print(f"    Step {i+1}: {warmup_time:.6f} seconds")
+
+    print("  Measurement steps:")
+    times = []
+    with nvtx.range(f"{name}_forward_backward_measurement"):
+        for i in range(MEASUREMENT_STEPS):
+            start = timer()
+            with nvtx.range(f"measurement_step_{i+1}"):
+                with nvtx.range("forward"):
+                    with autocast_context:
+                        output = model(input_ids)
+                with nvtx.range("backward"):
+                    output.sum().backward()
+                model.zero_grad()
+                torch.cuda.synchronize()
+            step_time = timer() - start
+            times.append(step_time)
+            print(f"    Step {i+1}: {step_time:.6f} seconds")
+
+    bwd_mean, bwd_std = np.mean(times), np.std(times)
+
+    print(
+        f"  Mean: {bwd_mean:.6f} ± {bwd_std:.6f} seconds (CV: {bwd_std/bwd_mean*100:.2f}%)"
+    )
+
+    return {
+        "name": name,
+        "params": sum(p.numel() for p in model.parameters()),
+        "precision": precision_str,
+        "forward_backward_mean": bwd_mean,
+        "forward_backward_std": bwd_std,
+    }
+
+
 def benchmark_model(
     name, config, seq_length=512, warmup_steps=WARMUP_STEPS, use_bf16=False
 ):
-    """Benchmark a single model configuration.
+    """Benchmark a single model configuration (forward + backward, legacy function).
 
     Args:
         name: Model name for display
@@ -337,6 +529,12 @@ def main():
     warmup_steps = WARMUP_STEPS
     models_to_run = None  # None means run all models
     use_bf16 = False
+    profile_memory = False
+
+    # Benchmark selection flags (default: run all)
+    run_forward = False
+    run_backward = False
+    run_training = False
 
     # Parse arguments
     args = sys.argv[1:]
@@ -345,6 +543,28 @@ def main():
     if "--bf16" in args:
         use_bf16 = True
         args.remove("--bf16")
+
+    # Check for --profile-memory flag
+    if "--profile-memory" in args:
+        profile_memory = True
+        args.remove("--profile-memory")
+
+    # Check for benchmark selection flags
+    if "--forward-only" in args:
+        run_forward = True
+        args.remove("--forward-only")
+
+    if "--backward-only" in args:
+        run_backward = True
+        args.remove("--backward-only")
+
+    if "--training-only" in args:
+        run_training = True
+        args.remove("--training-only")
+
+    # If no specific benchmark selected, run all
+    if not (run_forward or run_backward or run_training):
+        run_forward = run_backward = run_training = True
 
     if len(args) > 0:
         # Check if first argument is a number (warmup steps)
@@ -379,57 +599,114 @@ def main():
     print(
         f"Precision: {'BF16 (Mixed Precision)' if use_bf16 else 'FP32 (Full Precision)'}"
     )
+    print(f"Memory profiling: {'Enabled' if profile_memory else 'Disabled'}")
+
+    # Show which benchmarks will run
+    benchmarks_to_run = []
+    if run_forward:
+        benchmarks_to_run.append("Forward")
+    if run_backward:
+        benchmarks_to_run.append("Forward+Backward")
+    if run_training:
+        benchmarks_to_run.append("Training")
+    print(f"Benchmarks: {', '.join(benchmarks_to_run)}")
     print(f"Models to run: {', '.join(models_dict.keys())}")
 
-    results = []
+    forward_results = []
+    backward_results = []
     training_results = []
+
+    # Start memory profiling if requested
+    if profile_memory:
+        print("\n" + "=" * 60)
+        print("Starting CUDA memory profiling...")
+        print("=" * 60)
+        torch.cuda.memory._record_memory_history(max_entries=1000000)
 
     for name, config in models_dict.items():
         for seq in config["seq_lengths"]:
             model_name = f"{name}_seq{seq}"
-            result = benchmark_model(
-                model_name,
-                config,
-                seq_length=seq,
-                warmup_steps=warmup_steps,
-                use_bf16=use_bf16,
+
+            # Run forward-only benchmark if requested
+            if run_forward:
+                result = benchmark_forward_only(
+                    model_name,
+                    config,
+                    seq_length=seq,
+                    warmup_steps=warmup_steps,
+                    use_bf16=use_bf16,
+                )
+                forward_results.append(result)
+
+            # Run forward+backward benchmark if requested
+            if run_backward:
+                result = benchmark_backward_only(
+                    model_name,
+                    config,
+                    seq_length=seq,
+                    warmup_steps=warmup_steps,
+                    use_bf16=use_bf16,
+                )
+                backward_results.append(result)
+
+            # Run complete training step with AdamW if requested
+            if run_training:
+                training_result = benchmark_training_step(
+                    model_name,
+                    config,
+                    seq_length=seq,
+                    warmup_steps=warmup_steps,
+                    use_bf16=use_bf16,
+                )
+                training_results.append(training_result)
+
+    # Save memory snapshot if profiling was enabled
+    if profile_memory:
+        precision_str = "bf16" if use_bf16 else "fp32"
+        snapshot_file = f"memory_snapshot_{precision_str}.pickle"
+        print("\n" + "=" * 60)
+        print(f"Saving memory snapshot to {snapshot_file}...")
+        print("=" * 60)
+        torch.cuda.memory._dump_snapshot(snapshot_file)
+        torch.cuda.memory._record_memory_history(enabled=None)
+        print("✓ Memory snapshot saved!")
+        print("  Upload to: https://pytorch.org/memory_viz")
+
+    # Summary sections
+    if forward_results:
+        print(f"\n{'='*60}\nFORWARD PASS SUMMARY\n{'='*60}")
+        print(f"{'Model':<15} {'Precision':<10} {'Params':<12} {'Forward (s)':<15}")
+        print("-" * 60)
+        for r in forward_results:
+            print(
+                f"{r['name']:<15} {r['precision']:<10} {r['params']:>11,} "
+                f"{r['forward_mean']:>8.6f}±{r['forward_std']:.6f}"
             )
-            results.append(result)
+        print("=" * 60)
 
-            # Also benchmark the complete training step with AdamW
-            training_result = benchmark_training_step(
-                model_name,
-                config,
-                seq_length=seq,
-                warmup_steps=warmup_steps,
-                use_bf16=use_bf16,
+    if backward_results:
+        print(f"\n{'='*60}\nFORWARD + BACKWARD SUMMARY\n{'='*60}")
+        print(f"{'Model':<15} {'Precision':<10} {'Params':<12} {'Fwd+Bwd (s)':<15}")
+        print("-" * 60)
+        for r in backward_results:
+            print(
+                f"{r['name']:<15} {r['precision']:<10} {r['params']:>11,} "
+                f"{r['forward_backward_mean']:>8.6f}±{r['forward_backward_std']:.6f}"
             )
-            training_results.append(training_result)
+        print("=" * 60)
 
-    # Summary
-    print(f"\n{'='*60}\nSUMMARY\n{'='*60}")
-    print(
-        f"{'Model':<10} {'Precision':<10} {'Params':<12} {'Forward (s)':<15} {'Backward (s)':<15}"
-    )
-    print("-" * 80)
-    for r in results:
+    if training_results:
+        print(f"\n{'='*60}\nTRAINING STEP SUMMARY (with AdamW)\n{'='*60}")
         print(
-            f"{r['name']:<10} {r['precision']:<10} {r['params']:>11,} "
-            f"{r['forward_mean']:>8.6f}±{r['forward_std']:.6f} "
-            f"{r['backward_mean']:>8.6f}±{r['backward_std']:.6f}"
+            f"{'Model':<15} {'Precision':<10} {'Params':<12} {'Training Step (s)':<20}"
         )
-    print("=" * 80)
-
-    # Training step summary
-    print(f"\n{'='*60}\nTRAINING STEP SUMMARY (with AdamW)\n{'='*60}")
-    print(f"{'Model':<10} {'Precision':<10} {'Params':<12} {'Training Step (s)':<20}")
-    print("-" * 80)
-    for r in training_results:
-        print(
-            f"{r['name']:<10} {r['precision']:<10} {r['params']:>11,} "
-            f"{r['training_step_mean']:>8.6f}±{r['training_step_std']:.6f}"
-        )
-    print("=" * 80)
+        print("-" * 60)
+        for r in training_results:
+            print(
+                f"{r['name']:<15} {r['precision']:<10} {r['params']:>11,} "
+                f"{r['training_step_mean']:>8.6f}±{r['training_step_std']:.6f}"
+            )
+        print("=" * 60)
 
 
 if __name__ == "__main__":

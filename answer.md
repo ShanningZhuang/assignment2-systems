@@ -450,3 +450,351 @@ With BF16, we **may not need to treat layer normalization as strictly** as with 
 
 ## (c)
 
+============================================================
+SUMMARY
+============================================================
+Model      Precision  Params       Forward (s)     Backward (s)
+--------------------------------------------------------------------------------
+large_seq128 BF16       969,411,840 0.156829±0.007042 0.284106±0.011902
+large_seq256 BF16       969,411,840 0.150492±0.005433 0.315056±0.054031
+large_seq512 BF16       969,411,840 0.154221±0.005847 0.287746±0.013350
+large_seq1024 BF16       969,411,840 0.211741±0.002352 0.397588±0.003027
+================================================================================
+
+============================================================
+TRAINING STEP SUMMARY (with AdamW)
+============================================================
+Model      Precision  Params       Training Step (s)
+--------------------------------------------------------------------------------
+large_seq128 BF16       969,411,840 0.563264±0.016795
+large_seq256 BF16       969,411,840 0.545883±0.012066
+large_seq512 BF16       969,411,840 0.557914±0.016264
+large_seq1024 BF16       969,411,840 0.701886±0.003029
+================================================================================
+
+============================================================
+SUMMARY
+============================================================
+Model      Params       Forward (s)     Backward (s)
+------------------------------------------------------------
+large_seq128 969,411,840 0.141830±0.006545 0.236700±0.011678
+large_seq256 969,411,840 0.148082±0.003076 0.308736±0.006818
+large_seq512 969,411,840 0.286982±0.001062 0.605574±0.001021
+large_seq1024 969,411,840 0.644561±0.000561 1.411845±0.004699
+============================================================
+
+BF16
+============================================================
+SUMMARY
+============================================================
+Model      Precision  Params       Forward (s)     Backward (s)
+--------------------------------------------------------------------------------
+2.7B_seq128 BF16       3,406,809,600 0.142008±0.003554 0.260662±0.009773
+2.7B_seq256 BF16       3,406,809,600 0.147835±0.009032 0.267800±0.009860
+2.7B_seq512 BF16       3,406,809,600 0.163224±0.004245 0.345682±0.007230
+================================================================================
+
+============================================================
+TRAINING STEP SUMMARY (with AdamW)
+============================================================
+Model      Precision  Params       Training Step (s)
+--------------------------------------------------------------------------------
+2.7B_seq128 BF16       3,406,809,600 0.698575±0.015821
+2.7B_seq256 BF16       3,406,809,600 0.718001±0.006092
+2.7B_seq512 BF16       3,406,809,600 0.812760±0.006099
+================================================================================
+
+FP32
+
+============================================================
+SUMMARY
+============================================================
+Model      Params       Forward (s)     Backward (s)
+------------------------------------------------------------
+2.7B_seq128 3,406,809,600 0.228101±0.001074 0.458868±0.001429
+2.7B_seq256 3,406,809,600 0.425166±0.001178 0.904626±0.003022
+2.7B_seq512 3,406,809,600 0.872745±0.001991 1.823213±0.003807
+============================================================
+
+With the increasing of the model or context. The time is smaller. I guess it is because the autocast to the BF16 costs a fixed time.
+The kernel has also been replaced with BF16.
+
+# memory_profiling
+
+(a)
+
+In forward only mode, the memory cost is almost the same regardless of the context length.
+In training and the backward only, the memory cost significantly increasing with the context length because it need to store the activation and the gradient.
+
+(b)
+
+Peak of the forward-only is about 14GB
+Peak of the backward-only in 128 is about 26GB, 256 about 26GB, 512 about 40GB.
+Peak of the training-only in 128 is about 55GB, 256 about 55GB, 512 about 70GB
+
+(c)
+
+In the forward the bf16 is even more than fp32 because we need a copy of the original parameters.
+
+Peak in bf16 is about 20GB.
+
+In the training-only the memory cost of the bf16 is almost the same as the fp32.
+
+(d)
+
+Let me calculate the total memory cost for all activations, considering what needs to be stored during forward pass and training.
+
+[1 tool called]
+
+Now let me calculate the total memory requirements systematically for all activations.
+
+## Memory Calculation for 2.7B Model
+
+**Model configuration:**
+- `d_model` = 2560
+- `d_ff` = 10240 
+- `num_layers` = 32
+- `num_heads` = 32
+- Parameters: 3,406,809,600 (~3.4B)
+
+**Variables:**
+- `B` = batch size
+- `S` = sequence length
+
+---
+
+## Part 1: Forward Pass Memory (Activations Saved for Backward)
+
+For each transformer layer, PyTorch must save certain activations for gradient computation during backward pass.
+
+### Per Layer - Attention Block:
+
+1. **Input to attention** (for residual gradient): `(B, S, d_model)`
+2. **Q, K, V projections**: `3 × (B, S, d_model)`
+3. **Attention scores** (Q @ K^T before softmax): `(B, num_heads, S, S)`
+4. **Attention weights** (after softmax): `(B, num_heads, S, S)`
+5. **Attention output** (before output projection): `(B, num_heads, S, d_head)`
+
+**Elements per layer (Attention):**
+```
+= B×S×d_model + 3×B×S×d_model + 2×B×num_heads×S² + B×S×d_model
+= 5×B×S×2560 + 2×B×32×S²
+= 12,800×B×S + 64×B×S²
+```
+
+### Per Layer - SwiGLU FFN Block:
+
+1. **Input to FFN** (for residual gradient): `(B, S, d_model)`
+2. **w1(x) output** (before SiLU): `(B, S, d_ff)`
+3. **w3(x) output**: `(B, S, d_ff)`
+4. **After SiLU and multiply**: `(B, S, d_ff)`
+5. **Final output**: `(B, S, d_model)`
+
+**Elements per layer (FFN):**
+```
+= B×S×d_model + 3×B×S×d_ff + B×S×d_model
+= 2×B×S×2560 + 3×B×S×10240
+= 5,120×B×S + 30,720×B×S
+= 35,840×B×S
+```
+
+### Total Per Layer:
+```
+Attention + FFN = (12,800 + 35,840)×B×S + 64×B×S²
+                = 48,640×B×S + 64×B×S²
+```
+
+### Total for 32 Layers:
+```
+Elements = 32 × (48,640×B×S + 64×B×S²)
+         = 1,556,480×B×S + 2,048×B×S²
+         = B×S×(1,556,480 + 2,048×S)
+```
+
+### Forward Pass Activation Memory (FP32, 4 bytes per element):
+
+```
+Bytes = 4 × B×S×(1,556,480 + 2,048×S)
+      = B×S×(6,225,920 + 8,192×S) bytes
+```
+
+**In MB:**
+```
+= B×S×(6,225,920 + 8,192×S) / 1,048,576
+= B×S×(5.9375 + 0.0078125×S) MB
+```
+
+### Verification with B=4, S=512:
+```
+= 4 × 512 × (5.9375 + 0.0078125×512)
+= 2,048 × (5.9375 + 4)
+= 2,048 × 9.9375
+= 20,352 MB ≈ 20 GB
+```
+
+---
+
+## Part 2: Complete Training Step with AdamW
+
+For a complete training step, we need:
+
+### 1. **Model Parameters** (FP32):
+```
+Parameters = 3,406,809,600
+Bytes = 3,406,809,600 × 4 = 13,627,238,400 bytes
+≈ 13.0 GB
+```
+
+### 2. **Gradients** (FP32, same size as parameters):
+```
+≈ 13.0 GB
+```
+
+### 3. **AdamW Optimizer States**:
+- **First moment (m)**: Same size as parameters ≈ 13.0 GB
+- **Second moment (v)**: Same size as parameters ≈ 13.0 GB
+```
+Total optimizer states = 26.0 GB
+```
+
+### 4. **Activations** (from forward pass):
+```
+= B×S×(5.9375 + 0.0078125×S) MB
+```
+
+### **Total Training Memory:**
+
+```
+Total = 52.0 GB + B×S×(5.9375 + 0.0078125×S) MB
+```
+
+Or more precisely in MB:
+```
+Total = 53,248 + B×S×(5.9375 + 0.0078125×S) MB
+```
+
+---
+
+## Summary Formulas
+
+### Forward Pass Only (FP32):
+```
+Memory (MB) = B × S × (5.9375 + 0.0078125×S)
+Memory (GB) = B × S × (0.0058 + 0.0000076×S)
+```
+
+### Training Step with AdamW (FP32):
+```
+Memory (MB) = 53,248 + B × S × (5.9375 + 0.0078125×S)
+Memory (GB) = 52.0 + B × S × (0.0058 + 0.0000076×S)
+```
+
+---
+
+## Concrete Examples
+
+| B | S | Forward Pass | Training Step | Notes |
+|---|---|--------------|---------------|-------|
+| 4 | 128 | **3.8 GB** | **55.8 GB** | Matches answer.md: ~55GB |
+| 4 | 256 | **7.1 GB** | **59.1 GB** | |
+| 4 | 512 | **20.4 GB** | **72.4 GB** | Matches answer.md: ~70GB |
+| 4 | 1024 | **73.7 GB** | **125.7 GB** | OOM on most GPUs |
+
+---
+
+## Key Observations
+
+1. **Quadratic growth**: The `64×B×S²` term (from attention scores) dominates at large S
+   - At S=128: Linear term dominates
+   - At S=512: Quadratic term becomes significant  
+   - At S=1024: Quadratic term dominates (4× the memory of S=512)
+
+2. **Training overhead**: Fixed ~52 GB for parameters + gradients + optimizer states
+
+3. **Memory bottleneck**: The attention score matrices `(B, H, S, S)` across 32 layers consume `2,048×B×S²` elements, which is:
+   - S=512: 512 MB per batch element
+   - S=1024: 2 GB per batch element
+
+4. **Why your benchmarks ran out of memory**: At S=1024 with B=4:
+   - Training needs ~126 GB
+   - Your GPU likely has 40-80 GB
+   - This explains why "xl 1024 and 2.7B 1024 ran out of memory"
+
+(e)
+
+The largest is multiple 100MB and add up to about 10GB and I think it is the parameter of the model.
+
+# pytorch_attention
+
+The benchmark is in the ./benchmarks/benchmark_attention.py.
+The attention implementation is in the attention.py.
+
+(a)
+
+============================================================================================================================================
+BENCHMARK SUMMARY
+============================================================================================================================================
+d_model    seq_len    Forward (ms)         Backward (ms)        Mem Before (MB)    Peak Mem (MB)      Status
+--------------------------------------------------------------------------------------------------------------------------------------------
+16         256        0.13 ± 0.00          0.37 ± 0.71          10.62              25.25              ✓
+16         1024       0.35 ± 0.01          1.10 ± 1.30          50.25              148.25             ✓
+16         4096       4.15 ± 0.12          10.17 ± 0.52         536.25             2080.25            ✓
+16         8192       14.42 ± 0.14         35.16 ± 1.19         2080.25            8240.25            ✓
+16         16384      58.65 ± 0.41         142.65 ± 0.26        8240.25            32848.25           ✓
+32         256        0.14 ± 0.03          0.29 ± 0.10          19.25              26.25              ✓
+32         1024       0.38 ± 0.04          1.24 ± 1.62          52.25              152.25             ✓
+32         4096       4.40 ± 0.13          10.35 ± 0.41         544.25             2096.25            ✓
+32         8192       15.46 ± 0.14         35.81 ± 0.15         2096.25            8272.25            ✓
+32         16384      62.82 ± 0.48         147.48 ± 0.41        8272.25            32912.25           ✓
+64         256        0.13 ± 0.00          0.40 ± 0.81          20.25              28.25              ✓
+64         1024       0.41 ± 0.02          1.13 ± 1.65          56.25              160.25             ✓
+64         4096       4.90 ± 0.13          10.84 ± 0.39         560.25             2128.25            ✓
+64         8192       17.51 ± 0.16         38.07 ± 0.20         2128.25            8336.25            ✓
+64         16384      71.19 ± 0.35         155.57 ± 0.44        8336.25            33040.25           ✓
+128        256        0.13 ± 0.00          0.37 ± 0.12          22.25              32.25              ✓
+128        1024       0.46 ± 0.02          1.04 ± 0.07          64.25              176.25             ✓
+128        4096       5.86 ± 0.14          11.87 ± 0.39         592.25             2192.25            ✓
+128        8192       21.35 ± 0.16         42.39 ± 0.20         2192.25            8464.25            ✓
+128        16384      86.41 ± 0.51         172.25 ± 0.40        8464.25            33296.25           ✓
+============================================================================================================================================
+================================================================================
+MEMORY SCALING ANALYSIS
+================================================================================
+
+d_model = 16:
+  Seq Length   Memory (MB)     Memory/seq^2
+  ---------------------------------------------
+  256          10.62           162.124634
+  1024         50.25           47.922134
+  4096         536.25          31.962991
+  8192         2080.25         30.998141
+  16384        8240.25         30.697323
+
+d_model = 32:
+  Seq Length   Memory (MB)     Memory/seq^2
+  ---------------------------------------------
+  256          19.25           293.731689
+  1024         52.25           49.829483
+  4096         544.25          32.439828
+  8192         2096.25         31.236559
+  16384        8272.25         30.816533
+
+d_model = 64:
+  Seq Length   Memory (MB)     Memory/seq^2
+  ---------------------------------------------
+  256          20.25           308.990479
+  1024         56.25           53.644180
+  4096         560.25          33.393502
+  8192         2128.25         31.713396
+  16384        8336.25         31.054951
+
+d_model = 128:
+  Seq Length   Memory (MB)     Memory/seq^2
+  ---------------------------------------------
+  256          22.25           339.508057
+  1024         64.25           61.273575
+  4096         592.25          35.300851
+  8192         2192.25         32.667071
+  16384        8464.25         31.531788
+
+(b)
