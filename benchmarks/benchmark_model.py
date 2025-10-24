@@ -16,6 +16,11 @@ Usage:
     python benchmark.py --bf16 small medium      # Run specific models with BF16
     python benchmark.py 10 --bf16 small          # Run with 10 warmup steps and BF16
 
+    # Compilation:
+    python benchmark.py --compile                # Run all models with torch.compile
+    python benchmark.py --compile --bf16 small   # Run with compilation and BF16
+    python benchmark.py 10 --compile small       # Run with 10 warmup steps and compilation
+
     # Selective benchmarks:
     python benchmark.py --forward-only small     # Run only forward pass
     python benchmark.py --backward-only small    # Run only forward+backward pass
@@ -95,7 +100,7 @@ MEASUREMENT_STEPS = 10
 
 
 def benchmark_forward_only(
-    name, config, seq_length=512, warmup_steps=WARMUP_STEPS, use_bf16=False
+    name, config, seq_length=512, warmup_steps=WARMUP_STEPS, use_bf16=False, use_compile=False
 ):
     """Benchmark forward pass only.
 
@@ -105,10 +110,12 @@ def benchmark_forward_only(
         seq_length: Sequence length to benchmark
         warmup_steps: Number of warmup iterations
         use_bf16: If True, use BF16 mixed precision via torch.autocast
+        use_compile: If True, compile model with torch.compile
     """
     precision_str = "BF16" if use_bf16 else "FP32"
+    compile_str = " (Compiled)" if use_compile else ""
     print(
-        f"\n{'='*60}\n{name.upper()} MODEL - FORWARD ONLY ({precision_str})\n{'='*60}"
+        f"\n{'='*60}\n{name.upper()} MODEL - FORWARD ONLY ({precision_str}{compile_str})\n{'='*60}"
     )
 
     # Initialize model
@@ -121,6 +128,10 @@ def benchmark_forward_only(
         d_ff=config["d_ff"],
         rope_theta=10000.0,
     ).cuda()
+    
+    # Compile model if requested
+    if use_compile:
+        model = torch.compile(model)
 
     input_ids = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, seq_length)).cuda()
     timer = timeit.default_timer
@@ -128,6 +139,7 @@ def benchmark_forward_only(
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(f"Context length: {config['context_length']}, Sequence length: {seq_length}")
     print(f"Precision: {precision_str}")
+    print(f"Compilation: {'Enabled' if use_compile else 'Disabled'}")
 
     # Create autocast context for mixed precision or nullcontext for full precision
     autocast_context = (
@@ -173,13 +185,14 @@ def benchmark_forward_only(
         "name": name,
         "params": sum(p.numel() for p in model.parameters()),
         "precision": precision_str,
+        "compiled": use_compile,
         "forward_mean": fwd_mean,
         "forward_std": fwd_std,
     }
 
 
 def benchmark_backward_only(
-    name, config, seq_length=512, warmup_steps=WARMUP_STEPS, use_bf16=False
+    name, config, seq_length=512, warmup_steps=WARMUP_STEPS, use_bf16=False, use_compile=False
 ):
     """Benchmark forward + backward pass.
 
@@ -189,10 +202,12 @@ def benchmark_backward_only(
         seq_length: Sequence length to benchmark
         warmup_steps: Number of warmup iterations
         use_bf16: If True, use BF16 mixed precision via torch.autocast
+        use_compile: If True, compile model with torch.compile
     """
     precision_str = "BF16" if use_bf16 else "FP32"
+    compile_str = " (Compiled)" if use_compile else ""
     print(
-        f"\n{'='*60}\n{name.upper()} MODEL - FORWARD + BACKWARD ({precision_str})\n{'='*60}"
+        f"\n{'='*60}\n{name.upper()} MODEL - FORWARD + BACKWARD ({precision_str}{compile_str})\n{'='*60}"
     )
 
     # Initialize model
@@ -205,6 +220,10 @@ def benchmark_backward_only(
         d_ff=config["d_ff"],
         rope_theta=10000.0,
     ).cuda()
+    
+    # Compile model if requested
+    if use_compile:
+        model = torch.compile(model)
 
     input_ids = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, seq_length)).cuda()
     timer = timeit.default_timer
@@ -212,6 +231,7 @@ def benchmark_backward_only(
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(f"Context length: {config['context_length']}, Sequence length: {seq_length}")
     print(f"Precision: {precision_str}")
+    print(f"Compilation: {'Enabled' if use_compile else 'Disabled'}")
 
     # Create autocast context for mixed precision or nullcontext for full precision
     autocast_context = (
@@ -265,13 +285,14 @@ def benchmark_backward_only(
         "name": name,
         "params": sum(p.numel() for p in model.parameters()),
         "precision": precision_str,
+        "compiled": use_compile,
         "forward_backward_mean": bwd_mean,
         "forward_backward_std": bwd_std,
     }
 
 
 def benchmark_model(
-    name, config, seq_length=512, warmup_steps=WARMUP_STEPS, use_bf16=False
+    name, config, seq_length=512, warmup_steps=WARMUP_STEPS, use_bf16=False, use_compile=False
 ):
     """Benchmark a single model configuration (forward + backward, legacy function).
 
@@ -281,9 +302,11 @@ def benchmark_model(
         seq_length: Sequence length to benchmark
         warmup_steps: Number of warmup iterations
         use_bf16: If True, use BF16 mixed precision via torch.autocast
+        use_compile: If True, compile model with torch.compile
     """
     precision_str = "BF16" if use_bf16 else "FP32"
-    print(f"\n{'='*60}\n{name.upper()} MODEL ({precision_str})\n{'='*60}")
+    compile_str = " (Compiled)" if use_compile else ""
+    print(f"\n{'='*60}\n{name.upper()} MODEL ({precision_str}{compile_str})\n{'='*60}")
 
     # Initialize model
     model = BasicsTransformerLM(
@@ -295,6 +318,10 @@ def benchmark_model(
         d_ff=config["d_ff"],
         rope_theta=10000.0,
     ).cuda()
+    
+    # Compile model if requested
+    if use_compile:
+        model = torch.compile(model)
 
     input_ids = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, seq_length)).cuda()
     timer = timeit.default_timer
@@ -302,6 +329,7 @@ def benchmark_model(
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(f"Context length: {config['context_length']}, Sequence length: {seq_length}")
     print(f"Precision: {precision_str}")
+    print(f"Compilation: {'Enabled' if use_compile else 'Disabled'}")
 
     # Create autocast context for mixed precision or nullcontext for full precision
     # torch.autocast automatically converts operations to BF16 where appropriate
@@ -397,6 +425,7 @@ def benchmark_model(
         "name": name,
         "params": sum(p.numel() for p in model.parameters()),
         "precision": precision_str,
+        "compiled": use_compile,
         "forward_mean": fwd_mean,
         "forward_std": fwd_std,
         "backward_mean": bwd_only,
@@ -405,7 +434,7 @@ def benchmark_model(
 
 
 def benchmark_training_step(
-    name, config, seq_length=512, warmup_steps=WARMUP_STEPS, use_bf16=False
+    name, config, seq_length=512, warmup_steps=WARMUP_STEPS, use_bf16=False, use_compile=False
 ):
     """Benchmark a complete training step with AdamW optimizer (forward + loss + backward + optimizer step).
 
@@ -415,10 +444,12 @@ def benchmark_training_step(
         seq_length: Sequence length to benchmark
         warmup_steps: Number of warmup iterations
         use_bf16: If True, use BF16 mixed precision via torch.autocast
+        use_compile: If True, compile model with torch.compile
     """
     precision_str = "BF16" if use_bf16 else "FP32"
+    compile_str = " (Compiled)" if use_compile else ""
     print(
-        f"\n{'='*60}\n{name.upper()} MODEL - TRAINING STEP WITH ADAMW ({precision_str})\n{'='*60}"
+        f"\n{'='*60}\n{name.upper()} MODEL - TRAINING STEP WITH ADAMW ({precision_str}{compile_str})\n{'='*60}"
     )
 
     # Initialize model
@@ -431,6 +462,10 @@ def benchmark_training_step(
         d_ff=config["d_ff"],
         rope_theta=10000.0,
     ).cuda()
+    
+    # Compile model if requested
+    if use_compile:
+        model = torch.compile(model)
 
     # Initialize AdamW optimizer
     optimizer = AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
@@ -444,6 +479,7 @@ def benchmark_training_step(
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(f"Context length: {config['context_length']}, Sequence length: {seq_length}")
     print(f"Precision: {precision_str}")
+    print(f"Compilation: {'Enabled' if use_compile else 'Disabled'}")
 
     # Create autocast context for mixed precision or nullcontext for full precision
     autocast_context = (
@@ -519,6 +555,7 @@ def benchmark_training_step(
         "name": name,
         "params": sum(p.numel() for p in model.parameters()),
         "precision": precision_str,
+        "compiled": use_compile,
         "training_step_mean": train_mean,
         "training_step_std": train_std,
     }
@@ -529,6 +566,7 @@ def main():
     warmup_steps = WARMUP_STEPS
     models_to_run = None  # None means run all models
     use_bf16 = False
+    use_compile = False
     profile_memory = False
 
     # Benchmark selection flags (default: run all)
@@ -543,6 +581,11 @@ def main():
     if "--bf16" in args:
         use_bf16 = True
         args.remove("--bf16")
+
+    # Check for --compile flag
+    if "--compile" in args:
+        use_compile = True
+        args.remove("--compile")
 
     # Check for --profile-memory flag
     if "--profile-memory" in args:
@@ -599,6 +642,7 @@ def main():
     print(
         f"Precision: {'BF16 (Mixed Precision)' if use_bf16 else 'FP32 (Full Precision)'}"
     )
+    print(f"Compilation: {'Enabled' if use_compile else 'Disabled'}")
     print(f"Memory profiling: {'Enabled' if profile_memory else 'Disabled'}")
 
     # Show which benchmarks will run
@@ -635,6 +679,7 @@ def main():
                     seq_length=seq,
                     warmup_steps=warmup_steps,
                     use_bf16=use_bf16,
+                    use_compile=use_compile,
                 )
                 forward_results.append(result)
 
@@ -646,6 +691,7 @@ def main():
                     seq_length=seq,
                     warmup_steps=warmup_steps,
                     use_bf16=use_bf16,
+                    use_compile=use_compile,
                 )
                 backward_results.append(result)
 
@@ -657,6 +703,7 @@ def main():
                     seq_length=seq,
                     warmup_steps=warmup_steps,
                     use_bf16=use_bf16,
+                    use_compile=use_compile,
                 )
                 training_results.append(training_result)
 

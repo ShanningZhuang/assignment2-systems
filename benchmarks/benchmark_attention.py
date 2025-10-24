@@ -24,6 +24,9 @@ import sys
 import itertools
 from cs336_systems.attention import naive_attention
 
+# Create compiled version of attention (using default mode as per homework instructions)
+compiled_attention = torch.compile(naive_attention)
+
 
 # Configuration parameters as per assignment
 BATCH_SIZE = 8
@@ -39,7 +42,9 @@ def get_memory_usage():
     return 0
 
 
-def benchmark_attention(d_model, seq_length):
+def benchmark_attention(
+    d_model, seq_length, use_compiled=False, version_name="uncompiled"
+):
     """
     Benchmark attention for a given configuration.
 
@@ -56,7 +61,9 @@ def benchmark_attention(d_model, seq_length):
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats()
 
-        print(f"\nBenchmarking d_model={d_model}, seq_length={seq_length}")
+        print(
+            f"\nBenchmarking {version_name} d_model={d_model}, seq_length={seq_length}"
+        )
         print(f"  Creating inputs...")
 
         # Create random inputs Q, K, V
@@ -71,23 +78,26 @@ def benchmark_attention(d_model, seq_length):
             BATCH_SIZE, seq_length, d_model, device="cuda", requires_grad=True
         )
 
+        # Select attention function
+        attention_fn = compiled_attention if use_compiled else naive_attention
+
         # Warmup
         print(f"  Warming up...")
         for _ in range(10):
-            output = naive_attention(Q, K, V)
+            output = attention_fn(Q, K, V)
             torch.cuda.synchronize()
 
         # Benchmark forward pass
         print(f"  Timing forward pass ({NUM_ITERATIONS} iterations)...")
         forward_times = []
 
-        for i in range(NUM_ITERATIONS):
+        for _ in range(NUM_ITERATIONS):
             torch.cuda.synchronize()
             start = torch.cuda.Event(enable_timing=True)
             end = torch.cuda.Event(enable_timing=True)
 
             start.record()
-            output = naive_attention(Q, K, V)
+            output = attention_fn(Q, K, V)
             end.record()
 
             torch.cuda.synchronize()
@@ -116,7 +126,7 @@ def benchmark_attention(d_model, seq_length):
             if V.grad is not None:
                 V.grad.zero_()
 
-            output = naive_attention(Q, K, V)
+            output = attention_fn(Q, K, V)
             output.backward(grad_output)
             torch.cuda.synchronize()
 
@@ -124,7 +134,7 @@ def benchmark_attention(d_model, seq_length):
         print(f"  Timing backward pass ({NUM_ITERATIONS} iterations)...")
         backward_times = []
 
-        for i in range(NUM_ITERATIONS):
+        for _ in range(NUM_ITERATIONS):
             # Zero gradients
             if Q.grad is not None:
                 Q.grad.zero_()
@@ -134,7 +144,7 @@ def benchmark_attention(d_model, seq_length):
                 V.grad.zero_()
 
             # Forward pass
-            output = naive_attention(Q, K, V)
+            output = attention_fn(Q, K, V)
 
             torch.cuda.synchronize()
             start = torch.cuda.Event(enable_timing=True)
@@ -159,6 +169,7 @@ def benchmark_attention(d_model, seq_length):
         return {
             "d_model": d_model,
             "seq_length": seq_length,
+            "version": version_name,
             "forward_mean_ms": forward_mean,
             "forward_std_ms": forward_std,
             "backward_mean_ms": backward_mean,
@@ -175,6 +186,7 @@ def benchmark_attention(d_model, seq_length):
         return {
             "d_model": d_model,
             "seq_length": seq_length,
+            "version": version_name,
             "status": "OOM",
             "error": str(e),
         }
@@ -183,6 +195,7 @@ def benchmark_attention(d_model, seq_length):
         return {
             "d_model": d_model,
             "seq_length": seq_length,
+            "version": version_name,
             "status": "error",
             "error": str(e),
         }
@@ -190,15 +203,16 @@ def benchmark_attention(d_model, seq_length):
 
 def print_summary_table(results):
     """Print a summary table of all benchmark results."""
-    print("\n" + "=" * 140)
+    print("\n" + "=" * 160)
     print("BENCHMARK SUMMARY")
-    print("=" * 140)
+    print("=" * 160)
     print(
-        f"{'d_model':<10} {'seq_len':<10} {'Forward (ms)':<20} {'Backward (ms)':<20} {'Mem Before (MB)':<18} {'Peak Mem (MB)':<18} {'Status':<10}"
+        f"{'Version':<12} {'d_model':<10} {'seq_len':<10} {'Forward (ms)':<20} {'Backward (ms)':<20} {'Mem Before (MB)':<18} {'Peak Mem (MB)':<18} {'Status':<10}"
     )
-    print("-" * 140)
+    print("-" * 160)
 
     for result in results:
+        version = result["version"]
         d_model = result["d_model"]
         seq_length = result["seq_length"]
 
@@ -222,10 +236,64 @@ def print_summary_table(results):
             status = "ERROR"
 
         print(
-            f"{d_model:<10} {seq_length:<10} {fwd:<20} {bwd:<20} {mem_before:<18} {peak_mem:<18} {status:<10}"
+            f"{version:<12} {d_model:<10} {seq_length:<10} {fwd:<20} {bwd:<20} {mem_before:<18} {peak_mem:<18} {status:<10}"
         )
 
-    print("=" * 140)
+    print("=" * 160)
+
+
+def print_performance_comparison(results):
+    """Print performance comparison between compiled and uncompiled versions."""
+    print("\n" + "=" * 80)
+    print("PERFORMANCE COMPARISON ANALYSIS")
+    print("=" * 80)
+
+    # Group results by configuration
+    config_pairs = {}
+    for result in results:
+        if result["status"] == "success":
+            key = (result["d_model"], result["seq_length"])
+            if key not in config_pairs:
+                config_pairs[key] = {}
+            config_pairs[key][result["version"]] = result
+
+    print(
+        f"{'Config':<20} {'Forward Speedup':<18} {'Backward Speedup':<19} {'Memory Diff (MB)':<18}"
+    )
+    print("-" * 80)
+
+    forward_speedups = []
+    backward_speedups = []
+
+    for (d_model, seq_length), versions in sorted(config_pairs.items()):
+        if "uncompiled" in versions and "compiled" in versions:
+            uncompiled = versions["uncompiled"]
+            compiled = versions["compiled"]
+
+            fwd_speedup = uncompiled["forward_mean_ms"] / compiled["forward_mean_ms"]
+            bwd_speedup = uncompiled["backward_mean_ms"] / compiled["backward_mean_ms"]
+            mem_diff = compiled["peak_memory_mb"] - uncompiled["peak_memory_mb"]
+
+            forward_speedups.append(fwd_speedup)
+            backward_speedups.append(bwd_speedup)
+
+            config_str = f"d={d_model}, seq={seq_length}"
+            print(
+                f"{config_str:<20} {fwd_speedup:<18.2f} {bwd_speedup:<18.2f} {mem_diff:<18.2f}"
+            )
+
+    if forward_speedups:
+        print("-" * 80)
+        print(
+            f"Average forward speedup: {np.mean(forward_speedups):.2f}x (std: {np.std(forward_speedups):.2f})"
+        )
+        print(
+            f"Average backward speedup: {np.mean(backward_speedups):.2f}x (std: {np.std(backward_speedups):.2f})"
+        )
+        print(f"Max forward speedup: {max(forward_speedups):.2f}x")
+        print(f"Max backward speedup: {max(backward_speedups):.2f}x")
+
+    print("=" * 80)
 
 
 def analyze_memory_scaling(results):
@@ -234,20 +302,22 @@ def analyze_memory_scaling(results):
     print("MEMORY SCALING ANALYSIS")
     print("=" * 80)
 
-    # Group by d_model
+    # Group by d_model and version
     by_d_model = {}
     for result in results:
         if result["status"] == "success":
             d = result["d_model"]
-            if d not in by_d_model:
-                by_d_model[d] = []
-            by_d_model[d].append(
+            version = result["version"]
+            key = f"{d} ({version})"
+            if key not in by_d_model:
+                by_d_model[key] = []
+            by_d_model[key].append(
                 (result["seq_length"], result["memory_before_backward_mb"])
             )
 
-    for d_model in sorted(by_d_model.keys()):
-        data = sorted(by_d_model[d_model], key=lambda x: x[0])
-        print(f"\nd_model = {d_model}:")
+    for d_model_version in sorted(by_d_model.keys()):
+        data = sorted(by_d_model[d_model_version], key=lambda x: x[0])
+        print(f"\n{d_model_version}:")
         print(f"  {'Seq Length':<12} {'Memory (MB)':<15} {'Memory/seq^2':<15}")
         print("  " + "-" * 45)
 
@@ -263,10 +333,60 @@ def analyze_memory_scaling(results):
     print("=" * 80)
 
 
+def compare_attention_versions(d_model, seq_length, config_num, total_configs):
+    """Compare compiled vs uncompiled attention for a single configuration."""
+    print(
+        f"\n[{config_num}/{total_configs}] Configuration: d_model={d_model}, seq_length={seq_length}"
+    )
+
+    results = []
+
+    # Benchmark uncompiled version
+    print("  Testing uncompiled version...")
+    result_uncompiled = benchmark_attention(
+        d_model, seq_length, use_compiled=False, version_name="uncompiled"
+    )
+    results.append(result_uncompiled)
+
+    # Only benchmark compiled version if uncompiled succeeded
+    if result_uncompiled["status"] == "success":
+        print("  Testing compiled version...")
+        result_compiled = benchmark_attention(
+            d_model, seq_length, use_compiled=True, version_name="compiled"
+        )
+        results.append(result_compiled)
+
+        # Print speedup comparison
+        if result_compiled["status"] == "success":
+            fwd_speedup = (
+                result_uncompiled["forward_mean_ms"]
+                / result_compiled["forward_mean_ms"]
+            )
+            bwd_speedup = (
+                result_uncompiled["backward_mean_ms"]
+                / result_compiled["backward_mean_ms"]
+            )
+            print(f"    Forward speedup: {fwd_speedup:.2f}x")
+            print(f"    Backward speedup: {bwd_speedup:.2f}x")
+    else:
+        print("  Skipping compiled version due to uncompiled failure")
+        # Add placeholder result for compiled version
+        result_compiled = {
+            "d_model": d_model,
+            "seq_length": seq_length,
+            "version": "compiled",
+            "status": "skipped",
+            "error": "Uncompiled version failed",
+        }
+        results.append(result_compiled)
+
+    return results
+
+
 def main():
     """Main benchmark function."""
     print("=" * 80)
-    print("ATTENTION BENCHMARK")
+    print("ATTENTION BENCHMARK - COMPILED vs UNCOMPILED")
     print("=" * 80)
     print(f"Configuration:")
     print(f"  Batch size: {BATCH_SIZE}")
@@ -280,6 +400,7 @@ def main():
         print(
             f"  Total GPU memory: {torch.cuda.get_device_properties(0).total_memory / (1024**3):.2f} GB"
         )
+    print("  Compilation mode: default")
     print("=" * 80)
 
     # Run benchmarks for all configurations
@@ -289,17 +410,19 @@ def main():
 
     for d_model, seq_length in itertools.product(HEAD_DIMS, SEQ_LENGTHS):
         current += 1
-        print(
-            f"\n[{current}/{total_configs}] Configuration: d_model={d_model}, seq_length={seq_length}"
+        config_results = compare_attention_versions(
+            d_model, seq_length, current, total_configs
         )
-        result = benchmark_attention(d_model, seq_length)
-        results.append(result)
+        results.extend(config_results)
 
     # Print summary
     print_summary_table(results)
 
     # Analyze memory scaling
     analyze_memory_scaling(results)
+
+    # Performance comparison analysis
+    print_performance_comparison(results)
 
     # Find first OOM configuration
     oom_results = [r for r in results if r["status"] == "OOM"]
@@ -311,53 +434,8 @@ def main():
         print(f"\nFirst OOM configuration:")
         print(f"  d_model: {first_oom['d_model']}")
         print(f"  seq_length: {first_oom['seq_length']}")
-        print(f"\nMemory accounting for this configuration:")
-
-        batch = BATCH_SIZE
-        seq = first_oom["seq_length"]
-        d = first_oom["d_model"]
-
-        # Memory calculations (in bytes, assuming float32 = 4 bytes)
-        bytes_per_float = 4
-
-        q_k_v_memory = 3 * batch * seq * d * bytes_per_float
-        attention_scores_memory = batch * seq * seq * bytes_per_float
-        attention_weights_memory = batch * seq * seq * bytes_per_float
-        output_memory = batch * seq * d * bytes_per_float
-
-        # Saved for backward: attention scores/weights and possibly inputs
-        backward_memory = attention_weights_memory + q_k_v_memory
-
-        print(f"\nForward pass memory (approximate):")
-        print(f"  Q, K, V: {q_k_v_memory / (1024**2):.2f} MB")
-        print(f"  Attention scores: {attention_scores_memory / (1024**2):.2f} MB")
-        print(f"  Attention weights: {attention_weights_memory / (1024**2):.2f} MB")
-        print(f"  Output: {output_memory / (1024**2):.2f} MB")
-        print(
-            f"  Total forward: {(q_k_v_memory + attention_scores_memory + attention_weights_memory + output_memory) / (1024**2):.2f} MB"
-        )
-        print(f"\nSaved for backward (approximate):")
-        print(f"  Attention weights: {attention_weights_memory / (1024**2):.2f} MB")
-        print(f"  Inputs (Q, K, V): {q_k_v_memory / (1024**2):.2f} MB")
-        print(f"  Total backward: {backward_memory / (1024**2):.2f} MB")
-        print(
-            f"\nTotal estimated: {(q_k_v_memory + attention_scores_memory + attention_weights_memory + output_memory + backward_memory) / (1024**2):.2f} MB"
-        )
-
+        print(f"  version: {first_oom['version']}")
         print("\n" + "=" * 80)
-        print("RECOMMENDATIONS")
-        print("=" * 80)
-        print("\nTo eliminate the O(seq_len^2) memory cost for backward pass:")
-        print("1. Flash Attention: Recompute attention on-the-fly during backward pass")
-        print("   - Trade computation for memory")
-        print(
-            "   - Only store softmax statistics (logsumexp), not full attention matrix"
-        )
-        print("2. Gradient checkpointing: Recompute activations during backward")
-        print(
-            "3. Sparse attention: Use local/strided patterns to reduce O(n^2) to O(n)"
-        )
-        print("=" * 80)
 
 
 if __name__ == "__main__":
