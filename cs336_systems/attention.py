@@ -104,7 +104,74 @@ class FlashAttentionPytorch(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dO):
-        pass
+        Q, K, V, O, L = ctx.saved_tensors
+        is_causal = ctx.is_causal
+        
+        BATCH_SIZE, Nq, dim = Q.shape
+        _, Nk, _ = K.shape
+        
+        # Step 1: Compute D vector (Equation 13, line 1)
+        # D = rowsum(O ⊙ dO) = sum along last dimension
+        D = (O * dO).sum(dim=-1)  # Shape: [batch, Nq]
+        
+        # Initialize gradients
+        dQ = torch.zeros_like(Q)
+        dK = torch.zeros_like(K)
+        dV = torch.zeros_like(V)
+        
+        # Use block sizes for tiled computation
+        Q_BLOCK_SIZE = 64
+        K_BLOCK_SIZE = 64
+        
+        for i in range(0, Nq, Q_BLOCK_SIZE):
+            q_end = min(i + Q_BLOCK_SIZE, Nq)
+            Q_i = Q[:, i:q_end, :]      # [batch, Bq, d]
+            O_i = O[:, i:q_end, :]      # [batch, Bq, d]
+            dO_i = dO[:, i:q_end, :]    # [batch, Bq, d]
+            L_i = L[:, i:q_end]         # [batch, Bq]
+            D_i = D[:, i:q_end]         # [batch, Bq]
+            
+            dQ_i = torch.zeros_like(Q_i)
+
+            for j in range(0, Nk, K_BLOCK_SIZE):
+                k_end = min(j + K_BLOCK_SIZE, Nk)
+                K_j = K[:, j:k_end, :]  # [batch, Bk, d]
+                V_j = V[:, j:k_end, :]  # [batch, Bk, d]
+                
+                # Equation 13, line 2: S = Q K^T / sqrt(d)
+                S_ij = torch.einsum('bqd,bkd->bqk', Q_i, K_j) / math.sqrt(dim)
+                
+                # Equation 14: P_ij = exp(S_ij - L_i)
+                # L_i is the log-sum-exp, so this recomputes P without storing it
+                P_ij = torch.exp(S_ij - L_i.unsqueeze(-1))
+                
+                # Apply causal mask if needed
+                if is_causal:
+                    # Create causal mask for this block
+                    mask = torch.arange(i, q_end, device=Q.device).unsqueeze(-1) >= \
+                        torch.arange(j, k_end, device=Q.device).unsqueeze(0)
+                    P_ij = P_ij * mask.unsqueeze(0)
+                    
+                # Equation 15: dV = P^T dO
+                dV[:, j:k_end, :] += torch.einsum('bqk,bqd->bkd', P_ij, dO_i)
+                
+                # Equation 16: dP = dO V^T
+                dP_ij = torch.einsum('bqd,bkd->bqk', dO_i, V_j)
+                
+                # Equation 17: dS_ij = P_ij ⊙ (dP_ij - D_i)
+                # This is the key step where D is used!
+                dS_ij = P_ij * (dP_ij - D_i.unsqueeze(-1))
+                
+                # Equation 18: dQ = dS K / sqrt(d)
+                dQ_i += torch.einsum('bqk,bkd->bqd', dS_ij, K_j) / math.sqrt(dim)
+                
+                # Equation 19: dK = dS^T Q / sqrt(d)
+                dK[:, j:k_end, :] += torch.einsum('bqk,bqd->bkd', dS_ij, Q_i) / math.sqrt(dim)
+            
+            dQ[:, i:q_end, :] = dQ_i
+        
+        return dQ, dK, dV, None  # None for is_causal (non-differentiable)
+        
     
 class FlashAttentionTriton(torch.autograd.Function):
     @staticmethod
