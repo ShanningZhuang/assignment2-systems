@@ -11,7 +11,6 @@ Backward:
 
 Here are the equations in markdown format:
 
-```markdown
 $$dV = P^T dO \in \mathbb{R}^{N \times d}$$
 
 $$dP = dOV^T \in \mathbb{R}^{N \times N}$$
@@ -21,11 +20,9 @@ $$dS = \text{dsoftmax}(dP) \in \mathbb{R}^{N \times N}$$
 $$dQ = dSK \in \mathbb{R}^{N \times d}$$
 
 $$dK = QdS^T \in \mathbb{R}^{N \times d}$$
-```
 
 Or if you prefer inline format:
 
-```markdown
 $dV = P^T dO \in \mathbb{R}^{N \times d}$
 
 $dP = dOV^T \in \mathbb{R}^{N \times N}$
@@ -35,7 +32,6 @@ $dS = \text{dsoftmax}(dP) \in \mathbb{R}^{N \times N}$
 $dQ = dSK \in \mathbb{R}^{N \times d}$
 
 $dK = QdS^T \in \mathbb{R}^{N \times d}$
-```
 
 Tile:
 
