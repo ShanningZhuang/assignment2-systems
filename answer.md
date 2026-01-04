@@ -1032,4 +1032,207 @@ Model           Precision  Params       Training Step (s)
 
 compiled is faster but not enough.
 
-# 
+# Section 2: DDP
+
+Deliverable: Plot(s) and/or table(s) comparing the various settings, with 2-3 sentences of com-
+mentary about your results and thoughts about how the various factors interact.
+
+============================================================
+All-Reduce Benchmark Results
+============================================================
+Backend: NCCL
+Device: GPU (CUDA)
+World size: 2
+Tensor size: 1 MB (262144 float32 elements)
+Number of iterations: 20
+
+Aggregated statistics across all ranks:
+  Overall average time: 0.047 ms
+  Overall min time: 0.040 ms
+  Overall max time: 0.088 ms
+  Standard deviation: 0.010 ms
+
+Per-rank average times:
+  Rank 0: 0.047 ms
+  Rank 1: 0.047 ms
+
+Effective bandwidth: 20.70 GB/s
+============================================================
+
+
+============================================================
+All-Reduce Benchmark Results
+============================================================
+Backend: NCCL
+Device: GPU (CUDA)
+World size: 2
+Tensor size: 10 MB (2621440 float32 elements)
+Number of iterations: 20
+
+Aggregated statistics across all ranks:
+  Overall average time: 0.115 ms
+  Overall min time: 0.102 ms
+  Overall max time: 0.167 ms
+  Standard deviation: 0.012 ms
+
+Per-rank average times:
+  Rank 0: 0.113 ms
+  Rank 1: 0.117 ms
+
+Effective bandwidth: 84.68 GB/s
+============================================================
+
+============================================================
+All-Reduce Benchmark Results
+============================================================
+Backend: NCCL
+Device: GPU (CUDA)
+World size: 2
+Tensor size: 100 MB (26214400 float32 elements)
+Number of iterations: 20
+
+Aggregated statistics across all ranks:
+  Overall average time: 0.739 ms
+  Overall min time: 0.722 ms
+  Overall max time: 0.756 ms
+  Standard deviation: 0.010 ms
+
+Per-rank average times:
+  Rank 0: 0.741 ms
+  Rank 1: 0.737 ms
+
+Effective bandwidth: 132.17 GB/s
+============================================================
+
+============================================================
+All-Reduce Benchmark Results
+============================================================
+Backend: NCCL
+Device: GPU (CUDA)
+World size: 2
+Tensor size: 1024 MB (268435456 float32 elements)
+Number of iterations: 20
+
+Aggregated statistics across all ranks:
+  Overall average time: 6.745 ms
+  Overall min time: 6.618 ms
+  Overall max time: 6.902 ms
+  Standard deviation: 0.089 ms
+
+Per-rank average times:
+  Rank 0: 6.744 ms
+  Rank 1: 6.746 ms
+
+Effective bandwidth: 148.26 GB/s
+============================================================
+
+
+============================================================
+All-Reduce Benchmark Results
+============================================================
+Backend: NCCL
+Device: GPU (CUDA)
+World size: 4
+Tensor size: 1024 MB (268435456 float32 elements)
+Number of iterations: 20
+
+Aggregated statistics across all ranks:
+  Overall average time: 9.878 ms
+  Overall min time: 9.820 ms
+  Overall max time: 9.938 ms
+  Standard deviation: 0.029 ms
+
+Per-rank average times:
+  Rank 0: 9.879 ms
+  Rank 1: 9.870 ms
+  Rank 2: 9.878 ms
+  Rank 3: 9.886 ms
+
+Effective bandwidth: 151.85 GB/s
+============================================================
+
+
+
+
+
+## Benchmark DDP
+
+Starting DDP benchmark with 2 GPUs...
+Model: xl, Sequence length: 512
+Warmup: 5, Iterations: 20
+
+======================================================================
+DDP Training Benchmark Results
+======================================================================
+Model size: XL
+  d_model: 1600, num_layers: 48
+  num_heads: 25, d_ff: 6400
+  Total parameters: 1,998,235,200 (7622.66 MB)
+World size: 2 GPUs
+Batch size: 4
+Sequence length: 512
+Number of iterations: 20
+
+Timing breakdown (averaged across all ranks and iterations):
+  Total time per step:     895.226 ± 1.273 ms
+    Forward pass:          251.488 ms (28.1%)
+    Backward pass:         529.557 ms (59.2%)
+    Gradient communication: 7.419 ms (0.8%)
+    Optimizer step:        106.143 ms (11.9%)
+
+Communication overhead: 0.83% of total training time
+
+Per-rank average total time:
+  Rank 0: 895.444 ± 1.247 ms
+  Rank 1: 895.009 ± 1.261 ms
+
+Per-rank average communication time:
+  Rank 0: 7.488 ± 0.364 ms
+  Rank 1: 7.351 ± 0.161 ms
+======================================================================
+
+Starting DDP benchmark with 2 GPUs...
+Model: xl, Sequence length: 512
+Warmup: 5, Iterations: 20
+
+======================================================================
+DDP Training Benchmark Results
+======================================================================
+Model size: XL
+  d_model: 1600, num_layers: 48
+  num_heads: 25, d_ff: 6400
+  Total parameters: 1,998,235,200 (7622.66 MB)
+World size: 2 GPUs
+Batch size: 4
+Sequence length: 512
+Number of iterations: 20
+
+Timing breakdown (averaged across all ranks and iterations):
+  Total time per step:     892.449 ± 1.139 ms
+    Forward pass:          250.523 ms (28.1%)
+    Backward pass:         529.228 ms (59.3%)
+    Gradient communication: 7.083 ms (0.8%)
+    Optimizer step:        104.998 ms (11.8%)
+
+Communication overhead: 0.79% of total training time
+
+Per-rank average total time:
+  Rank 0: 892.377 ± 1.084 ms
+  Rank 1: 892.520 ± 1.188 ms
+
+Per-rank average communication time:
+  Rank 0: 7.153 ± 0.127 ms
+  Rank 1: 7.014 ± 0.338 ms
+======================================================================
+
+
+## 4D Parallelism
+
+Consider a new model config, XXL, with d_model=16384, d_ff=53248, and num_blocks=126. Be-
+cause for very large models, the vast majority of FLOPs are in the feedforward networks, we make
+some simplifying assumptions. First, we omit attention, input embeddings, and output linear layers.
+Then, we assume that each FFN is simply two linear layers (ignoring the activation function), where
+the first has input size d_model and output size d_ff, and the second has input size d_ff and output
+size d_model. Your model consists of num_blocks blocks of these two linear layers. Don’t do any
+activation checkpointing, and keep your activations and gradient communications in BF16, while your
+accumulated gradients, master weights and optimizer state should be in FP32

@@ -31,9 +31,11 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import numpy as np
+import torch.cuda.nvtx as nvtx
+from torch.profiler import profile, ProfilerActivity, schedule
 
 from cs336_systems.model import BasicsTransformerLM
-from cs336_systems.ddp import DDPIndividualParameters
+from cs336_systems.ddp import DDPIndividualParameters, DDPNaive
 from cs336_basics.optimizer import AdamW
 
 
@@ -94,10 +96,11 @@ def cleanup():
     dist.destroy_process_group()
 
 
-def benchmark_ddp_training(rank, world_size, model_size, seq_length, num_warmup, num_iterations):
+def benchmark_ddp_training(rank, world_size, model_size, seq_length, num_warmup, num_iterations,
+                          enable_profiler=False, ddp_mode="overlap"):
     """
     Benchmark DDP training with timing breakdown.
-    
+
     Args:
         rank: Process rank
         world_size: Total number of processes
@@ -105,6 +108,11 @@ def benchmark_ddp_training(rank, world_size, model_size, seq_length, num_warmup,
         seq_length: Sequence length for input
         num_warmup: Number of warmup iterations
         num_iterations: Number of timed iterations
+        enable_profiler: Enable PyTorch profiler
+        ddp_mode: DDP implementation to use:
+            - "overlap": DDPIndividualParameters with async all-reduce (overlap)
+            - "naive": DDPNaive with sync all-reduce (no overlap)
+            - "native": PyTorch native DDP (bucketing + overlap)
     """
     setup(rank, world_size)
     
@@ -123,9 +131,15 @@ def benchmark_ddp_training(rank, world_size, model_size, seq_length, num_warmup,
         d_ff=config["d_ff"],
         rope_theta=ROPE_THETA,
     ).to(device)
-    
-    # Wrap model with DDP
-    ddp_model = DDPIndividualParameters(model)
+
+    # Wrap model with DDP based on mode
+    if ddp_mode == "native":
+        from torch.nn.parallel import DistributedDataParallel as NativeDDP
+        ddp_model = NativeDDP(model, device_ids=[rank])
+    elif ddp_mode == "naive":
+        ddp_model = DDPNaive(model)
+    else:  # "overlap" (default)
+        ddp_model = DDPIndividualParameters(model)
     
     # Create optimizer
     optimizer = AdamW(ddp_model.parameters(), lr=1e-4, weight_decay=0.1)
@@ -142,7 +156,8 @@ def benchmark_ddp_training(rank, world_size, model_size, seq_length, num_warmup,
             logits.view(-1, VOCAB_SIZE), target_ids.view(-1)
         )
         loss.backward()
-        ddp_model.finish_gradient_synchronization()
+        if ddp_mode != "native":
+            ddp_model.finish_gradient_synchronization()
         optimizer.step()
     
     # Synchronize all processes before timing
@@ -155,62 +170,87 @@ def benchmark_ddp_training(rank, world_size, model_size, seq_length, num_warmup,
     backward_times = []
     comm_times = []
     optimizer_times = []
-    
-    for _ in range(num_iterations):
-        # Zero gradients
-        optimizer.zero_grad()
-        
-        # Synchronize before each iteration
-        dist.barrier()
-        torch.cuda.synchronize()
-        
-        # Measure forward pass
-        start_event = torch.cuda.Event(enable_timing=True)
-        end_event = torch.cuda.Event(enable_timing=True)
-        
-        iter_start = torch.cuda.Event(enable_timing=True)
-        iter_start.record()
-        
-        start_event.record()
-        logits = ddp_model(input_ids)
-        loss = torch.nn.functional.cross_entropy(
-            logits.view(-1, VOCAB_SIZE), target_ids.view(-1)
+
+    # Setup PyTorch profiler if enabled
+    prof = None
+    if enable_profiler and rank == 0:
+        prof = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            schedule=schedule(wait=1, warmup=1, active=3, repeat=1),
+            on_trace_ready=lambda p: p.export_chrome_trace(f"ddp_trace_rank{rank}.json"),
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True,
         )
-        end_event.record()
-        torch.cuda.synchronize()
-        forward_time = start_event.elapsed_time(end_event)
-        
-        # Measure backward pass (compute only, without communication)
-        start_event.record()
-        loss.backward()
-        end_event.record()
-        torch.cuda.synchronize()
-        backward_time = start_event.elapsed_time(end_event)
-        
-        # Measure communication time
-        start_event.record()
-        ddp_model.finish_gradient_synchronization()
-        end_event.record()
-        torch.cuda.synchronize()
-        comm_time = start_event.elapsed_time(end_event)
-        
-        # Measure optimizer step
-        start_event.record()
-        optimizer.step()
-        end_event.record()
-        torch.cuda.synchronize()
-        optimizer_time = start_event.elapsed_time(end_event)
-        
-        iter_end = torch.cuda.Event(enable_timing=True)
-        iter_end.record()
-        torch.cuda.synchronize()
-        total_time = iter_start.elapsed_time(iter_end)
-        
-        total_times.append(total_time)
-        forward_times.append(forward_time)
-        backward_times.append(backward_time)
-        comm_times.append(comm_time)
-        optimizer_times.append(optimizer_time)
+        prof.start()
+
+    for iter_idx in range(num_iterations):
+        with nvtx.range(f"iteration_{iter_idx}"):
+            # Zero gradients
+            with nvtx.range("zero_grad"):
+                optimizer.zero_grad()
+
+            # Synchronize before each iteration
+            dist.barrier()
+            torch.cuda.synchronize()
+
+            # Measure forward pass
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
+
+            iter_start = torch.cuda.Event(enable_timing=True)
+            iter_start.record()
+
+            start_event.record()
+            with nvtx.range("forward"):
+                logits = ddp_model(input_ids)
+                loss = torch.nn.functional.cross_entropy(
+                    logits.view(-1, VOCAB_SIZE), target_ids.view(-1)
+                )
+            end_event.record()
+            torch.cuda.synchronize()
+            forward_time = start_event.elapsed_time(end_event)
+
+            # Measure backward pass (includes async all-reduce launches)
+            start_event.record()
+            with nvtx.range("backward"):
+                loss.backward()
+            end_event.record()
+            torch.cuda.synchronize()
+            backward_time = start_event.elapsed_time(end_event)
+
+            # Measure communication time (waiting for all-reduces)
+            start_event.record()
+            if ddp_mode != "native":
+                ddp_model.finish_gradient_synchronization()
+            end_event.record()
+            torch.cuda.synchronize()
+            comm_time = start_event.elapsed_time(end_event)
+
+            # Measure optimizer step
+            start_event.record()
+            with nvtx.range("optimizer_step"):
+                optimizer.step()
+            end_event.record()
+            torch.cuda.synchronize()
+            optimizer_time = start_event.elapsed_time(end_event)
+
+            iter_end = torch.cuda.Event(enable_timing=True)
+            iter_end.record()
+            torch.cuda.synchronize()
+            total_time = iter_start.elapsed_time(iter_end)
+
+            total_times.append(total_time)
+            forward_times.append(forward_time)
+            backward_times.append(backward_time)
+            comm_times.append(comm_time)
+            optimizer_times.append(optimizer_time)
+
+        if prof:
+            prof.step()
+
+    if prof:
+        prof.stop()
     
     # Gather timings from all ranks
     all_total_times = [None] * world_size
@@ -321,6 +361,18 @@ if __name__ == "__main__":
         default=5,
         help="Number of warmup iterations (default: 5)"
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Enable PyTorch profiler (generates JSON trace)"
+    )
+    parser.add_argument(
+        "--ddp-mode",
+        type=str,
+        choices=["overlap", "naive", "native"],
+        default="overlap",
+        help="DDP implementation: overlap (async all-reduce), naive (sync all-reduce), native (PyTorch DDP)"
+    )
     args = parser.parse_args()
     
     # Validate CUDA availability
@@ -338,14 +390,22 @@ if __name__ == "__main__":
         print(f"Error: Sequence length {args.seq_length} exceeds model context length {model_config['context_length']}")
         sys.exit(1)
     
+    ddp_types = {
+        "overlap": "Custom DDP (Individual Parameters + Async Overlap)",
+        "naive": "Custom DDP (Naive Sync, No Overlap)",
+        "native": "Native PyTorch DDP (Bucketing + Overlap)",
+    }
     print(f"Starting DDP benchmark with {args.world_size} GPUs...")
     print(f"Model: {args.model_size}, Sequence length: {args.seq_length}")
+    print(f"DDP Implementation: {ddp_types[args.ddp_mode]}")
     print(f"Warmup: {args.num_warmup}, Iterations: {args.num_iterations}")
-    
+    print(f"Profiling: {'Enabled' if args.profile else 'Disabled'}")
+
     # Spawn processes for distributed training
     mp.spawn(
         fn=benchmark_ddp_training,
-        args=(args.world_size, args.model_size, args.seq_length, args.num_warmup, args.num_iterations),
+        args=(args.world_size, args.model_size, args.seq_length, args.num_warmup, args.num_iterations,
+              args.profile, args.ddp_mode),
         nprocs=args.world_size,
         join=True
     )
