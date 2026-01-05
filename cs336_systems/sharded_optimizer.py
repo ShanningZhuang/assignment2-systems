@@ -73,6 +73,21 @@ class ShardedOptimizer(Optimizer):
 
         Args:
             closure: A closure that reevaluates the model and returns the loss (optional).
+                     A closure is a callable (function) that re-evaluates the model and
+                     returns the loss. It's used by some optimizers (like LBFGS) that need
+                     to re-evaluate the loss multiple times during a single optimization step.
+                     For most optimizers (SGD, Adam, AdamW), the closure is not used and
+                     can be None. When provided, the optimizer may call closure() internally
+                     to recompute gradients. Example usage:
+                     
+                         def closure():
+                             optimizer.zero_grad()
+                             output = model(input)
+                             loss = loss_fn(output, target)
+                             loss.backward()
+                             return loss
+                         optimizer.step(closure)
+                         
             **kwargs: Additional keyword arguments passed to the wrapped optimizer's step.
 
         Returns:
@@ -86,12 +101,31 @@ class ShardedOptimizer(Optimizer):
         3. Consider efficiency: can you overlap broadcasts? Use async operations?
         4. Handle tied weights carefully (don't broadcast the same parameter twice)
         """
-        # TODO: Call wrapped optimizer's step
+        # Call wrapped optimizer's step
+        loss = self._wrapped_optimizer.step(closure=closure, **kwargs)
 
-        # TODO: Synchronize parameters across ranks using broadcast
+        # Synchronize parameters across ranks using broadcast
         # For each parameter, the rank that owns it should broadcast to all other ranks
-
-        raise NotImplementedError("Implement step")
+        # Use async operations for efficiency
+        handles = []
+        broadcasted_params = set()
+        
+        for param, owner_rank in zip(self._all_params, self._param_to_rank):
+            # Handle tied weights - don't broadcast the same parameter twice
+            param_id = id(param)
+            if param_id in broadcasted_params:
+                continue
+            broadcasted_params.add(param_id)
+            
+            # Launch async broadcast from the owner rank
+            handle = dist.broadcast(param.data, src=owner_rank, async_op=True)
+            handles.append(handle)
+        
+        # Wait for all broadcasts to complete
+        for handle in handles:
+            handle.wait()
+        
+        return loss
 
     def add_param_group(self, param_group: dict[str, Any]):
         """
@@ -122,18 +156,43 @@ class ShardedOptimizer(Optimizer):
         - Parameters that don't require gradients can be skipped
         """
         
-        # TODO: Extract parameters from param_group
+        # Extract parameters from param_group
+        params = param_group.get('params', [])
+        if isinstance(params, torch.Tensor):
+            params = [params]
+        else:
+            params = list(params)
         
-        # TODO: Assign parameters to ranks (deterministic across all ranks)
-        # Consider: round-robin, or balanced by parameter numel()
-
-        # TODO: Track which parameters this rank is responsible for
-
-        # TODO: Call super().add_param_group()
-
-        # TODO: If wrapped optimizer exists, update it as well
-
-        raise NotImplementedError("Implement add_param_group")
+        # Filter to unique parameters that require gradients and haven't been seen
+        unique_new_params = []
+        for param in params:
+            param_id = id(param)
+            if param_id not in self._seen_params and param.requires_grad:
+                self._seen_params.add(param_id)
+                unique_new_params.append(param)
+        
+        # Assign parameters to ranks using round-robin (deterministic across all ranks)
+        # Track which parameters this rank owns
+        my_params = []
+        for i, param in enumerate(unique_new_params):
+            # Assign based on current global index
+            global_idx = len(self._all_params) + i
+            owner_rank = global_idx % self._world_size
+            
+            self._param_to_rank.append(owner_rank)
+            
+            if owner_rank == self._rank:
+                my_params.append(param)
+                self._my_params.append(param)
+        
+        # Add all params to the global list
+        self._all_params.extend(unique_new_params)
+        
+        # Create a new param_group with only this rank's parameters for the wrapped optimizer
+        if my_params and self._wrapped_optimizer is not None:
+            new_group = {k: v for k, v in param_group.items() if k != 'params'}
+            new_group['params'] = my_params
+            self._wrapped_optimizer.add_param_group(new_group)
 
     def zero_grad(self, set_to_none: bool = True):
         """
@@ -143,8 +202,14 @@ class ShardedOptimizer(Optimizer):
         - You may need to zero gradients for ALL parameters (not just this rank's),
           since backward pass computes gradients for all parameters on all ranks
         """
-        # TODO: Zero gradients for all parameters
-        raise NotImplementedError("Implement zero_grad")
+        # Zero gradients for ALL parameters since backward pass computes gradients
+        # for all parameters on all ranks
+        for param in self._all_params:
+            if param.grad is not None:
+                if set_to_none:
+                    param.grad = None
+                else:
+                    param.grad.zero_()
 
     @property
     def state(self):
@@ -154,7 +219,7 @@ class ShardedOptimizer(Optimizer):
         Implementation hint:
         - Return the wrapped optimizer's state
         """
-        raise NotImplementedError("Implement state property")
+        return self._wrapped_optimizer.state
 
 
 def get_sharded_optimizer(params, optimizer_cls: Type[Optimizer], **kwargs) -> Optimizer:
