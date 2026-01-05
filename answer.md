@@ -1150,10 +1150,19 @@ Per-rank average times:
 
 Effective bandwidth: 151.85 GB/s
 ============================================================
+x time: 9.397 ms
+  Standard deviation: 0.041 ms
 
+Per-rank average times:
+  Rank 0: 9.190 ms
+  Rank 1: 9.190 ms
+  Rank 2: 9.195 ms
+  Rank 3: 9.187 ms
+  Rank 4: 9.194 ms
+  Rank 5: 9.191 ms
 
-
-
+Effective bandwidth: 181.34 GB/s
+============================================================
 
 ## Benchmark DDP
 
@@ -1225,14 +1234,187 @@ Per-rank average communication time:
   Rank 1: 7.014 ± 0.338 ms
 ======================================================================
 
+scyf804@m0004:~/assignment2-systems$ srun --gpus=2 --time=10   nsys profile -o naiv
+e_ddp       --trace=cuda,nvtx,osrt     uv run  python benchmarks/benchmark_ddp.py -
+-model-size xl --world-size 2 --num-iterations 5 --ddp-mode naive
+WARNING: CPU IP/backtrace sampling not supported, disabling.
+Try the 'nsys status --environment' command to learn more.
+
+WARNING: CPU context switch tracing not supported, disabling.
+Try the 'nsys status --environment' command to learn more.
+
+Starting DDP benchmark with 2 GPUs...
+Model: xl, Sequence length: 512
+DDP Implementation: Custom DDP (Naive Sync, No Overlap)
+Warmup: 5, Iterations: 5
+Profiling: Disabled
+
+======================================================================
+DDP Training Benchmark Results
+======================================================================
+Model size: XL
+  d_model: 1600, num_layers: 48
+  num_heads: 25, d_ff: 6400
+  Total parameters: 1,998,235,200 (7622.66 MB)
+World size: 2 GPUs
+Batch size: 4
+Sequence length: 512
+Number of iterations: 5
+
+Timing breakdown (averaged across all ranks and iterations):
+  Total time per step:     936.877 ± 1.199 ms
+    Forward pass:          253.241 ms (27.0%)
+    Backward pass:         506.919 ms (54.1%)
+    Gradient communication: 70.061 ms (7.5%)
+    Optimizer step:        106.407 ms (11.4%)
+
+Communication overhead: 7.48% of total training time
+
+Per-rank average total time:
+  Rank 0: 936.941 ± 1.205 ms
+  Rank 1: 936.814 ± 1.191 ms
+
+Per-rank average communication time:
+  Rank 0: 70.210 ± 1.042 ms
+  Rank 1: 69.911 ± 0.170 ms
+======================================================================
+Collecting data...
+Generating '/tmp/nsys-report-1d6a.qdstrm'
+[1/1] [========================100%] naive_ddp.nsys-rep
+Generated:
+    /data/home/scyf804/assignment2-systems/naive_ddp.nsys-rep
+scyf804@m0004:~/assignment2-systems$ srun --gpus=2 --time=10   nsys profile -o naiv
+e_flatten_ddp       --trace=cuda,nvtx,osrt     uv run  python benchmarks/benchmark_
+ddp.py --model-size xl --world-size 2 --num-iterations 5 --ddp-mode naive
+WARNING: CPU IP/backtrace sampling not supported, disabling.
+Try the 'nsys status --environment' command to learn more.
+
+WARNING: CPU context switch tracing not supported, disabling.
+Try the 'nsys status --environment' command to learn more.
+
+Starting DDP benchmark with 2 GPUs...
+Model: xl, Sequence length: 512
+DDP Implementation: Custom DDP (Naive Sync, No Overlap)
+Warmup: 5, Iterations: 5
+Profiling: Disabled
+
+======================================================================
+DDP Training Benchmark Results
+======================================================================
+Model size: XL
+  d_model: 1600, num_layers: 48
+  num_heads: 25, d_ff: 6400
+  Total parameters: 1,998,235,200 (7622.66 MB)
+World size: 2 GPUs
+Batch size: 4
+Sequence length: 512
+Number of iterations: 5
+
+Timing breakdown (averaged across all ranks and iterations):
+  Total time per step:     935.486 ± 0.801 ms
+    Forward pass:          253.286 ms (27.1%)
+    Backward pass:         505.358 ms (54.0%)
+    Gradient communication: 70.098 ms (7.5%)
+    Optimizer step:        106.583 ms (11.4%)
+
+Communication overhead: 7.49% of total training time
+
+Per-rank average total time:
+  Rank 0: 935.483 ± 0.817 ms
+  Rank 1: 935.490 ± 0.785 ms
+
+Per-rank average communication time:
+  Rank 0: 70.013 ± 1.121 ms
+  Rank 1: 70.183 ± 1.049 ms
+======================================================================
+Collecting data...
+Generating '/tmp/nsys-report-ed74.qdstrm'
+[1/1] [========================100%] naive_flatten_ddp.nsys-rep
+Generated:
+    /data/home/scyf804/assignment2-systems/naive_flatten_ddp.nsys-rep
 
 ## 4D Parallelism
 
-Consider a new model config, XXL, with d_model=16384, d_ff=53248, and num_blocks=126. Be-
-cause for very large models, the vast majority of FLOPs are in the feedforward networks, we make
-some simplifying assumptions. First, we omit attention, input embeddings, and output linear layers.
-Then, we assume that each FFN is simply two linear layers (ignoring the activation function), where
-the first has input size d_model and output size d_ff, and the second has input size d_ff and output
-size d_model. Your model consists of num_blocks blocks of these two linear layers. Don’t do any
-activation checkpointing, and keep your activations and gradient communications in BF16, while your
-accumulated gradients, master weights and optimizer state should be in FP32
+Consider a new model config, XXL, with the following parameters:
+- `d_model=16384`
+- `d_ff=53248`
+- `num_blocks=126`
+
+Because for very large models, the vast majority of FLOPs are in the feedforward networks, we make some simplifying assumptions:
+
+1. We omit attention, input embeddings, and output linear layers.
+2. We assume that each FFN is simply two linear layers (ignoring the activation function):
+   - The first has input size `d_model` and output size `d_ff`
+   - The second has input size `d_ff` and output size `d_model`
+3. Your model consists of `num_blocks` blocks of these two linear layers.
+
+**Precision requirements:**
+- Don't do any activation checkpointing
+- Keep your activations and gradient communications in **BF16**
+- Keep your accumulated gradients, master weights, and optimizer state in **FP32**
+
+### (a) Memory for Master Weights, Gradients, and Optimizer State
+
+**Question:** How much memory would it take to store the master model weights, accumulated gradients and optimizer states in FP32 on a single device? How much memory is saved for backward (these will be in BF16)? How many H100 80GB GPUs worth of memory is this?
+
+**Deliverable:** Your calculations and a one-sentence response.
+
+**Answer:**
+
+**Parameter count calculation:**
+- Each FFN block has two linear layers:
+  - First linear: `d_model × d_ff = 16384 × 53248 = 872,415,232` parameters
+  - Second linear: `d_ff × d_model = 53248 × 16384 = 872,415,232` parameters
+- Parameters per block: `2 × 872,415,232 = 1,744,830,464`
+- Total parameters: `126 × 1,744,830,464 = 219,848,638,464 ≈ 219.85 billion parameters`
+
+**Memory for FP32 storage (master weights, accumulated gradients, optimizer states):**
+- Master weights (FP32): `219.85B × 4 bytes = 879.39 GB`
+- Accumulated gradients (FP32): `219.85B × 4 bytes = 879.39 GB`
+- Optimizer states (Adam: 1st and 2nd moments, FP32): `219.85B × 4 × 2 = 1,758.79 GB`
+- **Total FP32 memory: `879.39 + 879.39 + 1758.79 = 3,517.57 GB`**
+
+**Memory saved for backward (BF16 model weights and gradients):**
+During the backward pass, we need:
+- BF16 model weights for gradient computation: `219.85B × 2 bytes = 439.70 GB`
+- BF16 gradients (computed and communicated in BF16): `219.85B × 2 bytes = 439.70 GB`
+
+Note: BF16 gradients can be directly accumulated into FP32 master gradients because BF16 has the same dynamic range as FP32 (8 exponent bits), allowing automatic casting without overflow issues. The savings from using BF16 instead of FP32 for the backward pass:
+- Model weights: saves `219.85B × 2 bytes = 439.70 GB` (BF16 vs FP32)
+- Gradients during backward: saves `219.85B × 2 bytes = 439.70 GB` (BF16 vs FP32)
+- **Total memory saved for backward: `439.70 + 439.70 = 879.39 GB`**
+
+**Number of H100 80GB GPUs:**
+- `3,517.57 GB / 80 GB = 43.97 ≈ 44 H100 GPUs`
+
+**Response:** Storing the master weights, accumulated gradients, and optimizer states in FP32 requires approximately 3,518 GB of memory (equivalent to 44 H100 80GB GPUs), and using BF16 for model weights and gradients during the backward pass saves approximately 879 GB compared to using FP32 for these tensors.
+
+### (b) FSDP Sharding Requirements
+
+**Question:** Now assume your master weights, optimizer state, gradients and half of your activations (in practice every second layer) are sharded across N_FSDP devices. Write an expression for how much memory this would take per device. What value does N_FSDP need to be for the total memory cost to be less than 1 v5p TPU (95GB per device)?
+
+**Deliverable:** Your calculations and a one-sentence response.
+
+**Answer:**
+
+
+
+
+### (c) Compute Bound Analysis
+
+**Question:** Consider only the forward pass. Use the communication bandwidth of W_ici = 2 × 9 × 10^10 and FLOPS/s of C = 4.6 × 10^14 for TPU v5p as given in the TPU Scaling Book. Following the notation of the Scaling Book, use M_X = 2, M_Y = 1 (a 3D mesh), with X = 16 being your FSDP dimension, and Y = 4 being your TP dimension. At what per-device batch size is this model compute bound? What is the overall batch size in this setting?
+
+**Deliverable:** Your calculations and a one-sentence response.
+
+**Answer:**
+
+
+
+
+### (d) Reducing Batch Size While Retaining Throughput
+
+**Question:** In practice, we want the overall batch size to be as small as possible, and we also always use our compute effectively (in other words we want to never be communication bound). What other tricks can we employ to reduce the batch size of our model but retain high throughput?
+
+**Deliverable:** A one-paragraph response. Back up your claims with references and/or equations.
+
+**Answer:**

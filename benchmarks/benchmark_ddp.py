@@ -35,7 +35,7 @@ import torch.cuda.nvtx as nvtx
 from torch.profiler import profile, ProfilerActivity, schedule
 
 from cs336_systems.model import BasicsTransformerLM
-from cs336_systems.ddp import DDPIndividualParameters, DDPNaive
+from cs336_systems.ddp import DDPIndividualParameters, DDPNaive, DDPBucketed
 from cs336_basics.optimizer import AdamW
 
 
@@ -97,7 +97,7 @@ def cleanup():
 
 
 def benchmark_ddp_training(rank, world_size, model_size, seq_length, num_warmup, num_iterations,
-                          enable_profiler=False, ddp_mode="overlap"):
+                          enable_profiler=False, ddp_mode="overlap", bucket_size_mb=25.0):
     """
     Benchmark DDP training with timing breakdown.
 
@@ -112,7 +112,9 @@ def benchmark_ddp_training(rank, world_size, model_size, seq_length, num_warmup,
         ddp_mode: DDP implementation to use:
             - "overlap": DDPIndividualParameters with async all-reduce (overlap)
             - "naive": DDPNaive with sync all-reduce (no overlap)
+            - "bucketed": DDPBucketed with gradient bucketing + overlap
             - "native": PyTorch native DDP (bucketing + overlap)
+        bucket_size_mb: Bucket size in MB (only used for "bucketed" mode)
     """
     setup(rank, world_size)
     
@@ -138,6 +140,8 @@ def benchmark_ddp_training(rank, world_size, model_size, seq_length, num_warmup,
         ddp_model = NativeDDP(model, device_ids=[rank])
     elif ddp_mode == "naive":
         ddp_model = DDPNaive(model)
+    elif ddp_mode == "bucketed":
+        ddp_model = DDPBucketed(model, bucket_size_mb=bucket_size_mb)
     else:  # "overlap" (default)
         ddp_model = DDPIndividualParameters(model)
     
@@ -150,6 +154,8 @@ def benchmark_ddp_training(rank, world_size, model_size, seq_length, num_warmup,
     
     # Warmup runs
     for _ in range(num_warmup):
+        if ddp_mode == "bucketed":
+            ddp_model.reset_buckets()
         optimizer.zero_grad()
         logits = ddp_model(input_ids)
         loss = torch.nn.functional.cross_entropy(
@@ -186,6 +192,10 @@ def benchmark_ddp_training(rank, world_size, model_size, seq_length, num_warmup,
 
     for iter_idx in range(num_iterations):
         with nvtx.range(f"iteration_{iter_idx}"):
+            # Reset buckets for bucketed mode
+            if ddp_mode == "bucketed":
+                ddp_model.reset_buckets()
+
             # Zero gradients
             with nvtx.range("zero_grad"):
                 optimizer.zero_grad()
@@ -369,9 +379,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--ddp-mode",
         type=str,
-        choices=["overlap", "naive", "native"],
+        choices=["overlap", "naive", "bucketed", "native"],
         default="overlap",
-        help="DDP implementation: overlap (async all-reduce), naive (sync all-reduce), native (PyTorch DDP)"
+        help="DDP implementation: overlap (async all-reduce), naive (sync all-reduce), bucketed (bucketed async), native (PyTorch DDP)"
+    )
+    parser.add_argument(
+        "--bucket-size-mb",
+        type=float,
+        default=25.0,
+        help="Bucket size in MB for bucketed DDP mode (default: 25.0)"
     )
     args = parser.parse_args()
     
@@ -393,6 +409,7 @@ if __name__ == "__main__":
     ddp_types = {
         "overlap": "Custom DDP (Individual Parameters + Async Overlap)",
         "naive": "Custom DDP (Naive Sync, No Overlap)",
+        "bucketed": f"Custom DDP (Bucketed {args.bucket_size_mb}MB + Async Overlap)",
         "native": "Native PyTorch DDP (Bucketing + Overlap)",
     }
     print(f"Starting DDP benchmark with {args.world_size} GPUs...")
@@ -405,7 +422,7 @@ if __name__ == "__main__":
     mp.spawn(
         fn=benchmark_ddp_training,
         args=(args.world_size, args.model_size, args.seq_length, args.num_warmup, args.num_iterations,
-              args.profile, args.ddp_mode),
+              args.profile, args.ddp_mode, args.bucket_size_mb),
         nprocs=args.world_size,
         join=True
     )
